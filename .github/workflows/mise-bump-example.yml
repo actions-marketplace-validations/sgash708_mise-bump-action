@@ -10,7 +10,10 @@ on:
 
 jobs:
   mise-bump-example:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
       pull-requests: write
