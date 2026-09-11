@@ -171,16 +171,10 @@ func (c *Client) ReadFile(ctx context.Context, path, ref string) ([]byte, string
 }
 
 // OpenBumpPR is idempotent with respect to in.BranchName (see
-// troubleshooting.md, "422 Reference already exists"):
-//
-//   - If a pull request is already open from in.BranchName into
-//     in.BaseBranch, its number is returned immediately with no further
-//     writes.
-//   - Otherwise, if in.BranchName exists without an open PR (left over from
-//     a run that failed after creating the branch but before opening the
-//     PR), the stale branch is deleted and recreated from in.BaseBranch.
-//   - Then it creates the branch, commits in.FileContent to in.FilePath,
-//     opens a pull request, and applies in.Labels.
+// troubleshooting.md, "422 Reference already exists"): an existing open PR
+// short-circuits with no writes, a stale branch is deleted and recreated,
+// and otherwise it creates the branch, commits, opens the PR, and applies
+// in.Labels.
 func (c *Client) OpenBumpPR(ctx context.Context, in runner.BumpPRInput) (int, error) {
 	if number, exists, err := c.findOpenPR(ctx, in.BaseBranch, in.BranchName); err != nil {
 		return 0, err

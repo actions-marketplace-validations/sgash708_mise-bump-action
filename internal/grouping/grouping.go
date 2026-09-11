@@ -46,13 +46,9 @@ func Group(entries []outdated.Entry, strategy Strategy) ([]PRGroup, error) {
 	}
 }
 
-// groupByFile bundles entries sharing the same RelPath into one group each.
-// A single bumped pull request rewrites exactly one file (see
-// runner.bumpGroup), so entries from different mise-config-path files must
-// never land in the same group — bundling them would either fail outright
-// (a tool from file B doesn't exist in file A's content) or, worse, silently
-// misapply a bump if both files happen to declare a tool with the same
-// name. Groups are emitted in first-seen file order.
+// groupByFile bundles entries sharing the same RelPath into one group each,
+// since a single bumped pull request rewrites exactly one file (see
+// runner.bumpGroup). Groups are emitted in first-seen file order.
 func groupByFile(entries []outdated.Entry) []PRGroup {
 	var order []string
 	byPath := make(map[string][]outdated.Entry)

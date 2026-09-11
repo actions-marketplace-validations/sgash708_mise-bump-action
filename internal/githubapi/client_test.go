@@ -51,13 +51,9 @@ func TestReadFile(t *testing.T) {
 			path: "examples/a b#c/mise.toml",
 			ref:  "feature/a b",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				// net/http decodes percent-escapes when populating r.URL.Path,
-				// so the decoded form is what a correctly-escaped request
-				// looks like here. What this test actually guards against is
-				// the "#" being sent unescaped: an unescaped "#" is a URL
-				// fragment delimiter and never reaches the server at all, so
-				// the request would arrive truncated instead of with a wrong
-				// literal path.
+				// r.URL.Path is already percent-decoded by net/http; this
+				// guards against an unescaped "#" (a URL fragment delimiter)
+				// truncating the request before it reaches the server.
 				if r.URL.Path != "/repos/sgash708/example/contents/examples/a b#c/mise.toml" {
 					http.Error(w, "unexpected path: "+r.URL.Path, http.StatusNotFound)
 					return

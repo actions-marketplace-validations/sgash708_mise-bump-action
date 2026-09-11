@@ -52,16 +52,12 @@ type GitHub interface {
 }
 
 // Run groups entries per cfg.PRStrategy and opens one pull request per
-// group. Every group is attempted even if an earlier one fails (e.g. a
-// transient GitHub API error), so one bad group can't prevent unrelated
-// tools from being bumped. It returns the pull request numbers successfully
-// opened, in the order their groups were processed, alongside a combined
-// error (via errors.Join) for any groups that failed. The returned error is
-// nil only if every group succeeded.
+// group, attempting every group even if an earlier one fails. It returns
+// the PR numbers opened, in processing order, and a combined error
+// (errors.Join) for any groups that failed.
 //
-// When cfg.DryRun is set, no branch/pull request is created for any group;
-// instead each group's intended title, body, and file diff are written to
-// out, and the returned PR numbers slice is always empty.
+// When cfg.DryRun is set, no branch/PR is created; each group's preview is
+// written to out instead, and the returned PR numbers slice is empty.
 func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh GitHub, out io.Writer) ([]int, error) {
 	groups, err := grouping.Group(entries, cfg.PRStrategy)
 	if err != nil {
@@ -164,13 +160,10 @@ func lineDiff(before, after []byte) string {
 	return b.String()
 }
 
-// buildEnrichment fetches release notes/commits for each entry backed by a
-// resolvable GitHub repo. Entries with no resolvable repo, or for which
-// enrichment fetching fails, are simply absent from the result — enrichment
-// is best-effort and never blocks the bump. When fetchFullDetails is false,
-// only RepoURL is populated (a pure string derivation, no API call) since
-// that's all a grouped PR body renders; the release-notes/commits HTML calls
-// are skipped entirely to avoid wasted GitHub API requests.
+// buildEnrichment fetches release notes/commits for entries backed by a
+// resolvable GitHub repo; unresolvable or failed lookups are simply
+// omitted. fetchFullDetails=false skips those API calls entirely,
+// populating only RepoURL (see bumpGroup).
 func buildEnrichment(ctx context.Context, gh GitHub, entries []outdated.Entry, fetchFullDetails bool) map[string]prtext.Enrichment {
 	enrichment := make(map[string]prtext.Enrichment, len(entries))
 	for _, e := range entries {
