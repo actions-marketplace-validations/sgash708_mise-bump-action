@@ -86,10 +86,17 @@ jobs:
 | `pr-strategy` | `per-tool` / `single` | `per-tool` |
 | `labels` | 付与するラベル(カンマ区切り) | `dependencies` |
 | `base-branch` | PRのベースブランチ | リポジトリの既定ブランチ |
+| `dry-run` | `true`でPR作成せずjob summaryにプレビューのみ出力 | `false` |
+| `ignore` | 除外するツール名パターン(カンマ区切り、末尾`*`で前方一致) | (なし) |
+| `max-open-prs` | 同時に開いてよいbump PRの上限(0=無制限) | `0` |
 
 ## エラーハンドリング
 
-PRグループ(pr-strategyが`per-tool`ならツール1件、`single`なら同一ファイル内の全ツール)単位で失敗しても他のグループの処理は止めない。失敗したグループは`errors.Join`でまとめてエラーとして返し、成功したグループのPR番号は正常に返す。警告/エラーはstderrに出力する(`$GITHUB_STEP_SUMMARY`はdry-runプレビュー専用)。一時的なネットワークエラーやmise未対応のバックエンドを想定。
+PRグループ(pr-strategyが`per-tool`ならツール1件、`single`なら同一ファイル内の全ツール)単位で失敗しても他のグループの処理は止めない。失敗したグループは`errors.Join`でまとめてエラーとして返し、成功したグループのPR番号は正常に返す。警告/エラーはstderrに出力する(`$GITHUB_STEP_SUMMARY`はdry-runプレビュー・スキップ通知用)。一時的なネットワークエラーやmise未対応のバックエンドを想定。
+
+グループ内の個別エントリが未対応の値形式(inline table/array)の場合は、そのエントリだけを
+スキップし、グループ内の他のエントリは正常に処理する(ADR 0013)。グループ内の全エントリが
+スキップされた場合のみ、そのグループ全体をスキップ扱いにする(失敗ではない)。
 
 ## v0スコープと配布
 
@@ -97,6 +104,8 @@ PRグループ(pr-strategyが`per-tool`ならツール1件、`single`なら同�
   ランナーは非対応(ADR 0004追記)。
 - ビルド済みバイナリをタグ付きでGitHub Releaseに添付し、composite actionが実行時にダウンロードする(`go install`ランタイムビルドは採用しない)。
 - 将来GoReleaser等でOS/arch別ビルドに移行する場合も、利用側workflowのインターフェース(`uses: sgash708/mise-bump-action@vX`)は変えない。
+- バイナリの真正性は`sha256sum`(転送中の破損検知)に加え、GitHub Artifact Attestation
+  (Sigstore)で検証する(ADR 0011)。リリースアセット単独の自己参照検証に依存しない。
 
 ## テスト方針
 
@@ -107,3 +116,5 @@ PRグループ(pr-strategyが`per-tool`ならツール1件、`single`なら同�
 
 - PRの自動マージ・自動rebase等、Dependabotの拡張コマンド(`@dependabot rebase`等)相当の機能は v0 スコープ外。
 - `mise-config-path`に複数ファイル(monorepo)を指定するケースは実装・テスト済み(`examples/monorepo/`、`internal/grouping`の`groupByFile`)。
+- メジャーバージョンだけを抑止する`ignore`ルール(Dependabotの`update-types`相当)は
+  スコープ外(ADR 0012)。`.tool-versions`形式も非対応(`mise.toml`のみ)。

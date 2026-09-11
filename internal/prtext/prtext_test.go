@@ -84,3 +84,20 @@ func TestBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestBuild_TruncatesOversizedBody(t *testing.T) {
+	huge := strings.Repeat("a", maxBodyBytes+1000)
+	entries := []outdated.Entry{{Name: "go", Requested: "1.26.1", Latest: "1.27.0"}}
+	enrichment := map[string]Enrichment{
+		"go": {RepoURL: "https://github.com/golang/go", ReleaseNotesHTML: huge},
+	}
+
+	got := Build(entries, false, enrichment)
+
+	if len(got.Body) > maxBodyBytes {
+		t.Fatalf("Body length = %d, want <= %d", len(got.Body), maxBodyBytes)
+	}
+	if !strings.Contains(got.Body, "truncated") {
+		t.Errorf("expected a truncation notice in Body, got %d bytes with no notice", len(got.Body))
+	}
+}

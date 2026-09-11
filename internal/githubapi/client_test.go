@@ -316,6 +316,51 @@ func TestOpenBumpPR(t *testing.T) {
 	}
 }
 
+func TestCountOpenBumpPRs(t *testing.T) {
+	tests := []struct {
+		name      string
+		labels    []string
+		prs       []map[string]any
+		wantCount int
+	}{
+		{
+			name:      "counts all open PRs when no labels are given",
+			prs:       []map[string]any{{"number": 1, "labels": []map[string]string{}}, {"number": 2, "labels": []map[string]string{}}},
+			wantCount: 2,
+		},
+		{
+			name:   "counts only PRs carrying a matching label",
+			labels: []string{"dependencies"},
+			prs: []map[string]any{
+				{"number": 1, "labels": []map[string]string{{"name": "dependencies"}}},
+				{"number": 2, "labels": []map[string]string{{"name": "enhancement"}}},
+				{"number": 3, "labels": []map[string]string{{"name": "dependencies"}, {"name": "mise"}}},
+			},
+			wantCount: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /repos/sgash708/example/pulls", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(tt.prs)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			c := NewClient(srv.Client(), srv.URL, "tok", "sgash708/example")
+			count, err := c.CountOpenBumpPRs(context.Background(), "main", tt.labels)
+			if err != nil {
+				t.Fatalf("CountOpenBumpPRs returned error: %v", err)
+			}
+			if count != tt.wantCount {
+				t.Errorf("count = %d, want %d", count, tt.wantCount)
+			}
+		})
+	}
+}
+
 func TestDo_RetriesOnceOn429WithRetryAfter(t *testing.T) {
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -137,6 +137,47 @@ func TestFromEnv(t *testing.T) {
 				DryRun:          false,
 			},
 		},
+		{
+			name: "parses ignore and max-open-prs",
+			env: map[string]string{
+				"GITHUB_TOKEN":       "tok",
+				"GITHUB_REPOSITORY":  "sgash708/example",
+				"GITHUB_REF_NAME":    "main",
+				"INPUT_IGNORE":       "terraform,aqua:foo/*",
+				"INPUT_MAX_OPEN_PRS": "5",
+			},
+			want: Config{
+				MiseConfigPaths: []string{"mise.toml"},
+				PRStrategy:      grouping.PerTool,
+				Labels:          []string{"dependencies"},
+				BaseBranch:      "main",
+				GitHubToken:     "tok",
+				Repository:      "sgash708/example",
+				APIURL:          "https://api.github.com",
+				Ignore:          []string{"terraform", "aqua:foo/*"},
+				MaxOpenPRs:      5,
+			},
+		},
+		{
+			name: "non-numeric max-open-prs returns error",
+			env: map[string]string{
+				"GITHUB_TOKEN":       "tok",
+				"GITHUB_REPOSITORY":  "sgash708/example",
+				"GITHUB_REF_NAME":    "main",
+				"INPUT_MAX_OPEN_PRS": "not-a-number",
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative max-open-prs returns error",
+			env: map[string]string{
+				"GITHUB_TOKEN":       "tok",
+				"GITHUB_REPOSITORY":  "sgash708/example",
+				"GITHUB_REF_NAME":    "main",
+				"INPUT_MAX_OPEN_PRS": "-1",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

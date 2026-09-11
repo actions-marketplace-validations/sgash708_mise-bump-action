@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -283,6 +284,33 @@ func (c *Client) closeSupersededPRs(ctx context.Context, base, prefix, excludeBr
 		comment := map[string]string{"body": fmt.Sprintf("Superseded by #%d.", newNumber)}
 		_ = c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", c.repo, pr.Number), comment, nil)
 	}
+}
+
+// CountOpenBumpPRs reports how many open pull requests into base carry any
+// of labels (config.Config.MaxOpenPRs counts against this).
+func (c *Client) CountOpenBumpPRs(ctx context.Context, base string, labels []string) (int, error) {
+	var out []struct {
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100", c.repo, url.QueryEscape(base))
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return 0, fmt.Errorf("failed to count open pull requests: %w", err)
+	}
+	if len(labels) == 0 {
+		return len(out), nil
+	}
+	count := 0
+	for _, pr := range out {
+		for _, l := range pr.Labels {
+			if slices.Contains(labels, l.Name) {
+				count++
+				break
+			}
+		}
+	}
+	return count, nil
 }
 
 // branchSHA returns the branch's current commit SHA, or exists=false if the

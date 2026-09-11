@@ -1,6 +1,7 @@
 package misetoml
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -87,7 +88,7 @@ func TestBump(t *testing.T) {
 			oldVersion:    "1.26.1",
 			newVersion:    "1.27.0",
 			wantErr:       true,
-			wantErrSubstr: "not a simple version string",
+			wantErrSubstr: "not a simple quoted version string",
 		},
 	}
 
@@ -110,5 +111,12 @@ func TestBump(t *testing.T) {
 				t.Errorf("content mismatch:\n got  %q\n want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBump_UnsupportedValueFormIsDistinguishable(t *testing.T) {
+	_, err := Bump([]byte("[tools]\ngo = { version = \"1.26.1\" }\n"), "go", "1.26.1", "1.27.0")
+	if !errors.Is(err, ErrUnsupportedValueForm) {
+		t.Fatalf("error = %v, want errors.Is(_, ErrUnsupportedValueForm)", err)
 	}
 }

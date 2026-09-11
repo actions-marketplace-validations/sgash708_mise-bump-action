@@ -271,6 +271,165 @@ func TestRun_SkipsClosedPreviouslyWithoutFailing(t *testing.T) {
 	}
 }
 
+func TestRun_FiltersIgnoredEntries(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+		{Name: "terraform", Requested: "1.7.5", Latest: "1.14.7", RelPath: "mise.toml"},
+		{Name: "aqua:foo/bar", Requested: "1.0.0", Latest: "1.1.0", RelPath: "mise.toml"},
+	}
+	var openedNames []string
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\nterraform = \"1.7.5\"\n\"aqua:foo/bar\" = \"1.0.0\"\n"), "blobsha", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			openedNames = append(openedNames, in.PRTitle)
+			return 1, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main", Ignore: []string{"terraform", "aqua:foo/*"}}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(numbers) != 1 {
+		t.Fatalf("expected 1 PR (only \"go\" is not ignored), got %d: %+v", len(numbers), numbers)
+	}
+	if len(openedNames) != 1 || !strings.Contains(openedNames[0], "go") {
+		t.Errorf("expected only the \"go\" PR to open, got %+v", openedNames)
+	}
+	for _, want := range []string{"terraform", "aqua:foo/bar"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("expected an [ignored] notice mentioning %q, got:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRun_StopsOpeningPRsAtMaxOpenPRs(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+		{Name: "node", Requested: "24.12.0", Latest: "24.13.0", RelPath: "mise.toml"},
+	}
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\n"), "blobsha", nil
+		},
+		CountOpenBumpPRsFunc: func(ctx context.Context, base string, labels []string) (int, error) {
+			return 2, nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			t.Fatal("OpenBumpPR must not be called once max-open-prs is already reached")
+			return 0, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main", MaxOpenPRs: 2}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(numbers) != 0 {
+		t.Errorf("expected no new PRs once the cap is reached, got %+v", numbers)
+	}
+	if !strings.Contains(out.String(), "max-open-prs") {
+		t.Errorf("expected a max-open-prs skip notice, got:\n%s", out.String())
+	}
+}
+
+func TestRun_MaxOpenPRsStopsPartway(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+		{Name: "node", Requested: "24.12.0", Latest: "24.13.0", RelPath: "mise.toml"},
+		{Name: "terraform", Requested: "1.7.5", Latest: "1.14.7", RelPath: "mise.toml"},
+	}
+	opened := 0
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\nterraform = \"1.7.5\"\n"), "blobsha", nil
+		},
+		CountOpenBumpPRsFunc: func(ctx context.Context, base string, labels []string) (int, error) {
+			return 1, nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			opened++
+			return opened, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main", MaxOpenPRs: 2}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	// Already at 1 with a cap of 2: only 1 more group may open before the cap
+	// (1 existing + 1 new = 2) is reached, leaving the 3rd group skipped.
+	if len(numbers) != 1 {
+		t.Errorf("expected exactly 1 new PR before hitting the cap, got %+v", numbers)
+	}
+}
+
+func TestRun_SkipsEntryWithUnsupportedValueFormButBumpsTheRest(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+		{Name: "python", Requested: "3.11", Latest: "3.12", RelPath: "mise.toml"},
+	}
+	var prBody string
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\npython = { version = \"3.11\" }\n"), "blobsha", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			prBody = in.PRBody
+			return 1, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.Single, BaseBranch: "main"}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v, want nil (an unsupported value form must not fail the whole group)", err)
+	}
+	if len(numbers) != 1 {
+		t.Fatalf("expected 1 PR containing the still-bumpable \"go\" entry, got %+v", numbers)
+	}
+	if strings.Contains(prBody, "python") {
+		t.Errorf("expected the skipped \"python\" entry to be excluded from the PR body, got %q", prBody)
+	}
+	if !strings.Contains(out.String(), "python") || !strings.Contains(out.String(), "can't rewrite") {
+		t.Errorf("expected a skip notice mentioning \"python\", got:\n%s", out.String())
+	}
+}
+
+func TestRun_SkipsWholeGroupWhenEveryEntryHasAnUnsupportedValueForm(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "python", Requested: "3.11", Latest: "3.12", RelPath: "mise.toml"},
+	}
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\npython = { version = \"3.11\" }\n"), "blobsha", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			t.Fatal("OpenBumpPR must not be called when every entry in the group is unsupported")
+			return 0, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main"}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(numbers) != 0 {
+		t.Errorf("expected no PRs, got %+v", numbers)
+	}
+}
+
 func TestRun_DryRun(t *testing.T) {
 	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main", DryRun: true}
 	entries := []outdated.Entry{

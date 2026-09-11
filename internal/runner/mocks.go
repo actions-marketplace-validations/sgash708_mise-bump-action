@@ -21,6 +21,9 @@ var _ GitHub = &GitHubMock{}
 //			CommitsHTMLFunc: func(ctx context.Context, repo string, fromVersion string, toVersion string) (string, bool) {
 //				panic("mock out the CommitsHTML method")
 //			},
+//			CountOpenBumpPRsFunc: func(ctx context.Context, base string, labels []string) (int, error) {
+//				panic("mock out the CountOpenBumpPRs method")
+//			},
 //			OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
 //				panic("mock out the OpenBumpPR method")
 //			},
@@ -39,6 +42,9 @@ var _ GitHub = &GitHubMock{}
 type GitHubMock struct {
 	// CommitsHTMLFunc mocks the CommitsHTML method.
 	CommitsHTMLFunc func(ctx context.Context, repo string, fromVersion string, toVersion string) (string, bool)
+
+	// CountOpenBumpPRsFunc mocks the CountOpenBumpPRs method.
+	CountOpenBumpPRsFunc func(ctx context.Context, base string, labels []string) (int, error)
 
 	// OpenBumpPRFunc mocks the OpenBumpPR method.
 	OpenBumpPRFunc func(ctx context.Context, in BumpPRInput) (int, error)
@@ -61,6 +67,15 @@ type GitHubMock struct {
 			FromVersion string
 			// ToVersion is the toVersion argument value.
 			ToVersion string
+		}
+		// CountOpenBumpPRs holds details about calls to the CountOpenBumpPRs method.
+		CountOpenBumpPRs []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Base is the base argument value.
+			Base string
+			// Labels is the labels argument value.
+			Labels []string
 		}
 		// OpenBumpPR holds details about calls to the OpenBumpPR method.
 		OpenBumpPR []struct {
@@ -91,6 +106,7 @@ type GitHubMock struct {
 		}
 	}
 	lockCommitsHTML      sync.RWMutex
+	lockCountOpenBumpPRs sync.RWMutex
 	lockOpenBumpPR       sync.RWMutex
 	lockReadFile         sync.RWMutex
 	lockReleaseNotesHTML sync.RWMutex
@@ -137,6 +153,46 @@ func (mock *GitHubMock) CommitsHTMLCalls() []struct {
 	mock.lockCommitsHTML.RLock()
 	calls = mock.calls.CommitsHTML
 	mock.lockCommitsHTML.RUnlock()
+	return calls
+}
+
+// CountOpenBumpPRs calls CountOpenBumpPRsFunc.
+func (mock *GitHubMock) CountOpenBumpPRs(ctx context.Context, base string, labels []string) (int, error) {
+	if mock.CountOpenBumpPRsFunc == nil {
+		panic("GitHubMock.CountOpenBumpPRsFunc: method is nil but GitHub.CountOpenBumpPRs was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Base   string
+		Labels []string
+	}{
+		Ctx:    ctx,
+		Base:   base,
+		Labels: labels,
+	}
+	mock.lockCountOpenBumpPRs.Lock()
+	mock.calls.CountOpenBumpPRs = append(mock.calls.CountOpenBumpPRs, callInfo)
+	mock.lockCountOpenBumpPRs.Unlock()
+	return mock.CountOpenBumpPRsFunc(ctx, base, labels)
+}
+
+// CountOpenBumpPRsCalls gets all the calls that were made to CountOpenBumpPRs.
+// Check the length with:
+//
+//	len(mockedGitHub.CountOpenBumpPRsCalls())
+func (mock *GitHubMock) CountOpenBumpPRsCalls() []struct {
+	Ctx    context.Context
+	Base   string
+	Labels []string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Base   string
+		Labels []string
+	}
+	mock.lockCountOpenBumpPRs.RLock()
+	calls = mock.calls.CountOpenBumpPRs
+	mock.lockCountOpenBumpPRs.RUnlock()
 	return calls
 }
 

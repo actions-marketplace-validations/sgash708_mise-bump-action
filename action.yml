@@ -22,6 +22,14 @@ inputs:
     description: "If true, print intended pull request title/body/diff to the job summary without creating any branch or pull request"
     required: false
     default: "false"
+  ignore:
+    description: "Comma-separated tool-name patterns to never bump (exact name, or a prefix ending in *)"
+    required: false
+    default: ""
+  max-open-prs:
+    description: "Cap on how many bump pull requests (carrying `labels`) may be open at once; 0 means unlimited"
+    required: false
+    default: "0"
 
 runs:
   using: "composite"
@@ -49,6 +57,12 @@ runs:
 
         cd "${{ github.action_path }}"
         sha256sum -c checksums.txt --ignore-missing
+        # checksums.txt is co-located with the binary in the same release, so
+        # on its own it only guards against transit corruption, not a
+        # compromised release. gh attestation verify checks the binary
+        # against Sigstore-signed provenance tied to this repo's build
+        # workflow (ADR 0011), which is independent of the release assets.
+        gh attestation verify "mise-bump-action_linux_${arch}" --repo sgash708/mise-bump-action
         chmod +x "mise-bump-action_linux_${arch}"
         mv "mise-bump-action_linux_${arch}" mise-bump-action
 
@@ -60,6 +74,8 @@ runs:
         INPUT_LABELS: ${{ inputs.labels }}
         INPUT_BASE_BRANCH: ${{ inputs.base-branch }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_IGNORE: ${{ inputs.ignore }}
+        INPUT_MAX_OPEN_PRS: ${{ inputs.max-open-prs }}
         GITHUB_TOKEN: ${{ github.token }}
       run: "${{ github.action_path }}/mise-bump-action"
 

@@ -8,6 +8,15 @@ Dependabot's `dependabot.yml` only understands its own built-in `package-ecosyst
 
 Design rationale lives in [.agents/docs/adr/](.agents/docs/adr/README.md); the full design doc is at [.agents/docs/specs/2026-09-11-mise-bump-action-design.md](.agents/docs/specs/2026-09-11-mise-bump-action-design.md).
 
+## Why not Renovate?
+
+Renovate does natively support `mise.toml` — if it's already usable in your setup, it's the more capable option (dependency grouping, semver-range ignore rules, custom schedules, a much larger user base). This action exists for the case where Renovate itself is the obstacle, not the features:
+
+- The hosted Mend Renovate App requires installing a third-party GitHub App, which in many organizations means a separate security review before it can touch any repository.
+- Self-hosting Renovate means running and maintaining another service, plus learning its (large) configuration surface just to reproduce "open a PR when a pin is behind."
+
+mise-bump-action trades Renovate's control surface for a lighter footprint: no GitHub App install, no separate service, just a workflow step authenticated with the repository's own `GITHUB_TOKEN`. The real cost of that trade is fewer safety nets — see [Limitations](#limitations) below before you rely on it for a team-wide rollout.
+
 ## Usage
 
 Add a workflow like this to `.github/workflows/` in the repository that uses it:
@@ -32,6 +41,18 @@ jobs:
           mise-config-path: mise.toml
           pr-strategy: per-tool
 ```
+
+### One-time repo setup
+
+GitHub disables "Actions can create pull requests" by default. Without it, this action's PR-creation step fails with a 403 (`GitHub Actions is not permitted to create or approve pull requests`), regardless of the `permissions:` block in the workflow above. Enable it once per repository:
+
+- **UI**: Settings → Actions → General → Workflow permissions → check "Allow GitHub Actions to create and approve pull requests".
+- **CLI**:
+  ```bash
+  gh api -X PUT repos/{owner}/{repo}/actions/permissions/workflow \
+    -f default_workflow_permissions=write \
+    -F can_approve_pull_request_reviews=true
+  ```
 
 ## Examples
 
@@ -61,11 +82,22 @@ See [examples/](examples/README.md) for details on each pattern.
 | `labels` | Labels to apply, comma-separated | `dependencies` |
 | `base-branch` | Base branch for pull requests | the ref that triggered the run (`GITHUB_REF_NAME`) |
 | `dry-run` | If `true`, print the intended pull request title/body/diff to the job summary without creating any branch or pull request | `false` |
+| `ignore` | Comma-separated tool-name patterns to never bump: an exact name, or a prefix ending in `*` (e.g. `terraform,aqua:foo/*`) | `` (none) |
+| `max-open-prs` | Cap on how many bump pull requests (carrying `labels`) may be open at once; existing ones count toward it. `0` means unlimited | `0` |
 
 ## Pull request lifecycle
 
 - Closing a pull request without merging it means "don't reopen this exact version" — the next run won't recreate it. A newer version is still proposed normally.
 - With `pr-strategy: per-tool`, opening a new pull request for a tool automatically closes any older still-open pull request for that same tool, with a comment pointing at the new one.
+
+## Limitations
+
+Trade-offs from favoring a light setup over Renovate/Dependabot's full feature set:
+
+- **No major-version-only suppression.** `ignore` excludes a tool entirely; there's no "propose patches but not majors" mode (many mise-managed tools — arbitrary CLIs, language runtimes — don't follow strict semver closely enough for that rule to be reliable).
+- **Only `mise.toml` is supported**, not `.tool-versions`. `mise-config-path` must point at a TOML file mise-bump-action can parse and rewrite in place.
+- **Values it can't rewrite in place** (inline tables/arrays, e.g. `python = { version = "3.11" }`) are skipped per-entry with a note in the job summary, not treated as a fatal error — but they also never get bumped. Use `ignore` to silence the repeated notice.
+- **Semi-automatic by design.** Authenticating with the caller's own `GITHUB_TOKEN` (ADR 0002) avoids needing an extra PAT, but it also means the first CI run on a PR this action opens needs a one-time manual approval (see the note in [Examples](#examples)) — unlike Dependabot, which runs as a verified first-party App with different treatment.
 
 ## Tech stack
 

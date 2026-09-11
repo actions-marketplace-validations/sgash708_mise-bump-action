@@ -12,6 +12,23 @@ Dependabot風のPRを作成する。
 設計判断の背景は [.agents/docs/adr/](.agents/docs/adr/README.md)、詳細設計は
 [.agents/docs/specs/2026-09-11-mise-bump-action-design.md](.agents/docs/specs/2026-09-11-mise-bump-action-design.md) を参照。
 
+## なぜRenovateではないのか
+
+Renovateは`mise.toml`をネイティブサポートしており、既にRenovateを使える状況なら
+そちらの方が高機能(依存関係のグルーピング、semver範囲でのignore、柔軟なスケジュール、
+圧倒的に大きいユーザーベース)。本actionが存在する理由は機能面ではなく、Renovate
+「自体」が導入の壁になるケースへの対応:
+
+- ホスト版のMend Renovate Appはサードパーティ製GitHub Appのインストールが必要で、
+  組織によってはリポジトリに触れる前に個別のセキュリティ審査が必要になる。
+- self-hosted Renovateは別サービスの運用・保守に加え、「ピンが古ければPRを開く」
+  だけのために広大な設定サーフェスを学ぶコストがかかる。
+
+mise-bump-actionはRenovateの制御機能と引き換えに、導入の軽さを取る: GitHub App
+のインストールも別サービスも不要で、リポジトリ自身の`GITHUB_TOKEN`だけで動く
+workflowステップ1つで完結する。その代償は実際にあるので、チーム展開の前に
+下記の[制限事項](#制限事項)を確認してほしい。
+
 ## 使い方
 
 利用側リポジトリの`.github/workflows/`に、以下のようなワークフローを置く。
@@ -36,6 +53,22 @@ jobs:
           mise-config-path: mise.toml
           pr-strategy: per-tool
 ```
+
+### 初回だけ必要なリポジトリ設定
+
+GitHubは既定で「Actionsがpull requestを作成できる」設定を無効にしている。これが
+無効なままだと、workflowの`permissions:`ブロックに関わらず、本actionのPR作成ステップが
+403(`GitHub Actions is not permitted to create or approve pull requests`)で失敗する。
+リポジトリごとに一度だけ有効化する。
+
+- **UI**: Settings → Actions → General → Workflow permissions →
+  「Allow GitHub Actions to create and approve pull requests」にチェック。
+- **CLI**:
+  ```bash
+  gh api -X PUT repos/{owner}/{repo}/actions/permissions/workflow \
+    -f default_workflow_permissions=write \
+    -F can_approve_pull_request_reviews=true
+  ```
 
 ## Examples
 
@@ -65,11 +98,31 @@ jobs:
 | `labels` | 付与するラベル(カンマ区切り) | `dependencies` |
 | `base-branch` | PRのベースブランチ | 実行をトリガーしたref(`GITHUB_REF_NAME`) |
 | `dry-run` | `true`にするとブランチ/PRを作成せず、意図したPRのタイトル・本文・diffをjob summaryに出力する | `false` |
+| `ignore` | 恒久的に除外するツール名パターン(カンマ区切り)。完全一致、または末尾`*`の前方一致(例: `terraform,aqua:foo/*`) | (なし) |
+| `max-open-prs` | 同時に開いていてよいbump PR(`labels`を持つもの)の上限数。既存のPRも数に含む。`0`は無制限 | `0` |
 
 ## PRのライフサイクル
 
 - PRをmergeせずにcloseした場合、そのバージョンは再提案されない(次回実行で再生成されない)。新しいバージョンが出れば通常通り提案される。
 - `pr-strategy: per-tool`の場合、同じツールの新しいPRを開くと、そのツールの古いopen PRを自動的にcloseし、新しいPRへのリンクをコメントする。
+
+## 制限事項
+
+導入の軽さをRenovate/Dependabotの機能の一部と引き換えにしている。
+
+- **メジャーバージョンだけの抑止はできない。** `ignore`はツールを丸ごと除外する仕組みで、
+  「パッチは提案するがメジャーは提案しない」というモードは無い(mise管理下のツールは
+  任意のCLIや言語ランタイムを含み、厳密なsemverに従わないものが多く、この種のルールの
+  信頼性が低くなるため)。
+- **`mise.toml`のみ対応。** `.tool-versions`は対象外。`mise-config-path`は
+  mise-bump-actionがその場で書き換えられるTOMLファイルを指す必要がある。
+- **その場で書き換えられない値形式**(inline tableや配列、例: `python = { version = "3.11" }`)
+  は、そのエントリだけをスキップしjob summaryに記録する(実行全体は失敗させない)が、
+  そのツールは永久にbumpされない。同じ通知を繰り返したくない場合は`ignore`で除外する。
+- **半自動である。** 呼び出し元自身の`GITHUB_TOKEN`で認証する設計(ADR 0002)は追加PAT
+  を不要にするが、代わりに本actionが開いたPRの最初のCI実行は手動承認が1回必要になる
+  ([Examples](#examples)の注意書き参照)。Dependabotのような検証済み公式Appとは
+  扱いが異なるため。
 
 ## 技術スタック
 

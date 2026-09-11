@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/sgash708/mise-bump-action/internal/grouping"
@@ -18,6 +19,13 @@ type Config struct {
 	Repository      string
 	APIURL          string
 	DryRun          bool
+	// Ignore lists tool-name patterns to exclude from bumping. Each pattern
+	// is either an exact tool name or a prefix ending in "*".
+	Ignore []string
+	// MaxOpenPRs caps how many bump pull requests may be open at once
+	// (existing ones carrying cfg.Labels count toward the cap). 0 means
+	// unlimited.
+	MaxOpenPRs int
 }
 
 const defaultAPIURL = "https://api.github.com"
@@ -71,6 +79,17 @@ func FromEnv(getenv func(string) string) (Config, error) {
 
 	dryRun := strings.EqualFold(getenv("INPUT_DRY_RUN"), "true")
 
+	ignore := splitNonEmpty(getenv("INPUT_IGNORE"), ",")
+
+	maxOpenPRs := 0
+	if raw := getenv("INPUT_MAX_OPEN_PRS"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return Config{}, fmt.Errorf("invalid max-open-prs %q: must be a non-negative integer", raw)
+		}
+		maxOpenPRs = n
+	}
+
 	return Config{
 		MiseConfigPaths: paths,
 		PRStrategy:      strategy,
@@ -80,6 +99,8 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		Repository:      repository,
 		APIURL:          apiURL,
 		DryRun:          dryRun,
+		Ignore:          ignore,
+		MaxOpenPRs:      maxOpenPRs,
 	}, nil
 }
 

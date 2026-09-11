@@ -53,6 +53,9 @@ var ErrClosedPreviously = errors.New("a pull request for this bump was previousl
 type GitHub interface {
 	ReadFile(ctx context.Context, path, ref string) (content []byte, sha string, err error)
 	OpenBumpPR(ctx context.Context, in BumpPRInput) (prNumber int, err error)
+	// CountOpenBumpPRs reports how many open pull requests into base carry
+	// any of labels, for enforcing config.Config.MaxOpenPRs.
+	CountOpenBumpPRs(ctx context.Context, base string, labels []string) (int, error)
 	// ReleaseNotesHTML and CommitsHTML enrich a bump's PR body with the
 	// target tool's own release notes/commit history, matching Dependabot's
 	// format. Implementations return ok=false when enrichment isn't
@@ -68,9 +71,16 @@ type GitHub interface {
 // the PR numbers opened, in processing order, and a combined error
 // (errors.Join) for any groups that failed.
 //
+// Entries matching cfg.Ignore are dropped before grouping. When cfg.MaxOpenPRs
+// is set and non-zero, groups are skipped once that many bump PRs (carrying
+// cfg.Labels) are already open — existing open PRs count toward the cap,
+// checked once at the start of the run.
+//
 // When cfg.DryRun is set, no branch/PR is created; each group's preview is
 // written to out instead, and the returned PR numbers slice is empty.
 func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh GitHub, out io.Writer) ([]int, error) {
+	entries = filterIgnored(entries, cfg.Ignore, out)
+
 	groups, err := grouping.Group(entries, cfg.PRStrategy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to group outdated entries: %w", err)
@@ -80,7 +90,22 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 	var prNumbers []int
 	var errs []error
 
+	openCount := 0
+	if cfg.MaxOpenPRs > 0 && !cfg.DryRun {
+		n, err := gh.CountOpenBumpPRs(ctx, cfg.BaseBranch, cfg.Labels)
+		if err != nil {
+			_, _ = fmt.Fprintf(out, "warning: failed to count open pull requests for max-open-prs (%v); not enforcing the limit this run\n", err)
+		} else {
+			openCount = n
+		}
+	}
+
 	for _, group := range groups {
+		if cfg.MaxOpenPRs > 0 && !cfg.DryRun && openCount >= cfg.MaxOpenPRs {
+			_, _ = fmt.Fprintf(out, "## [skipped] %s\n\nmax-open-prs (%d) already reached; not opening more pull requests this run.\n\n", group.Entries[0].RelPath, cfg.MaxOpenPRs)
+			continue
+		}
+
 		number, skipped, err := bumpGroup(ctx, cfg, group, multiConfig, gh, out)
 		if err != nil {
 			errs = append(errs, err)
@@ -90,12 +115,44 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 			continue
 		}
 		prNumbers = append(prNumbers, number)
+		openCount++
 	}
 
 	if len(errs) > 0 {
 		return prNumbers, errors.Join(errs...)
 	}
 	return prNumbers, nil
+}
+
+// filterIgnored removes entries whose Name matches any of ignore's patterns
+// (an exact tool name, or a prefix ending in "*"), noting each exclusion in
+// out.
+func filterIgnored(entries []outdated.Entry, ignore []string, out io.Writer) []outdated.Entry {
+	if len(ignore) == 0 {
+		return entries
+	}
+	kept := make([]outdated.Entry, 0, len(entries))
+	for _, e := range entries {
+		if pattern, matched := matchesAny(e.Name, ignore); matched {
+			_, _ = fmt.Fprintf(out, "## [ignored] %s\n\n`%s` matches the `ignore` input pattern `%s`; skipping.\n\n", e.RelPath, e.Name, pattern)
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
+}
+
+func matchesAny(name string, patterns []string) (pattern string, matched bool) {
+	for _, p := range patterns {
+		if prefix, ok := strings.CutSuffix(p, "*"); ok {
+			if strings.HasPrefix(name, prefix) {
+				return p, true
+			}
+		} else if name == p {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // bumpGroup reads the group's shared mise.toml, applies every entry's bump,
@@ -112,17 +169,27 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 	}
 
 	after := before
+	bumped := make([]outdated.Entry, 0, len(group.Entries))
 	for _, e := range group.Entries {
-		after, err = misetoml.Bump(after, e.Name, e.Requested, e.Latest)
-		if err != nil {
-			return 0, false, fmt.Errorf("failed to bump %s in %s: %w", e.Name, path, err)
+		next, bumpErr := misetoml.Bump(after, e.Name, e.Requested, e.Latest)
+		if errors.Is(bumpErr, misetoml.ErrUnsupportedValueForm) {
+			_, _ = fmt.Fprintf(out, "## [skipped] %s\n\n`%s` uses a value format mise-bump-action can't rewrite in place (inline table or array); skipping. Use the `ignore` input to silence this.\n\n", path, e.Name)
+			continue
 		}
+		if bumpErr != nil {
+			return 0, false, fmt.Errorf("failed to bump %s in %s: %w", e.Name, path, bumpErr)
+		}
+		after = next
+		bumped = append(bumped, e)
+	}
+	if len(bumped) == 0 {
+		return 0, true, nil
 	}
 
-	fetchFullDetails := len(group.Entries) == 1
-	enrichment := buildEnrichment(ctx, gh, group.Entries, fetchFullDetails)
-	text := prtext.Build(group.Entries, multiConfig, enrichment)
-	branch := branchName(group.Entries)
+	fetchFullDetails := len(bumped) == 1
+	enrichment := buildEnrichment(ctx, gh, bumped, fetchFullDetails)
+	text := prtext.Build(bumped, multiConfig, enrichment)
+	branch := branchName(bumped)
 
 	if cfg.DryRun {
 		writeDryRunPreview(out, path, branch, text, before, after)
@@ -132,7 +199,7 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 	number, err = gh.OpenBumpPR(ctx, BumpPRInput{
 		BaseBranch:    cfg.BaseBranch,
 		BranchName:    branch,
-		BranchPrefix:  branchPrefix(group.Entries),
+		BranchPrefix:  branchPrefix(bumped),
 		FilePath:      path,
 		FileContent:   after,
 		FileSHA:       sha,

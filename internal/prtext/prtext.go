@@ -6,9 +6,18 @@ package prtext
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/sgash708/mise-bump-action/internal/outdated"
 )
+
+// maxBodyBytes is GitHub's own limit on issue/pull-request body length.
+// Enrichment (upstream release notes/commit lists) can occasionally exceed
+// it for a tool with a very long changelog, which would otherwise turn a
+// successful bump into a 422 from the GitHub API.
+const maxBodyBytes = 65536
+
+const truncationNotice = "\n\n...(truncated — see the tool's own releases page for the full changelog)"
 
 // Content is the text used to open a pull request: its title, its body, and
 // the commit message applied to the branch (including the Dependabot-style
@@ -35,10 +44,30 @@ type Enrichment struct {
 // nil; entries with no corresponding map entry fall back to a plain
 // backtick-quoted bumps line.
 func Build(entries []outdated.Entry, multiConfig bool, enrichment map[string]Enrichment) Content {
+	var content Content
 	if len(entries) == 1 {
-		return buildSingle(entries[0], multiConfig, enrichment)
+		content = buildSingle(entries[0], multiConfig, enrichment)
+	} else {
+		content = buildGrouped(entries, enrichment)
 	}
-	return buildGrouped(entries, enrichment)
+	content.Body = truncateBody(content.Body)
+	return content
+}
+
+// truncateBody keeps body under maxBodyBytes, cutting at a rune boundary and
+// appending truncationNotice so it's clear content was cut, not corrupted.
+func truncateBody(body string) string {
+	if len(body) <= maxBodyBytes {
+		return body
+	}
+	keep := maxBodyBytes - len(truncationNotice)
+	if keep < 0 {
+		keep = 0
+	}
+	for keep > 0 && !utf8.RuneStart(body[keep]) {
+		keep--
+	}
+	return body[:keep] + truncationNotice
 }
 
 func buildSingle(e outdated.Entry, multiConfig bool, enrichment map[string]Enrichment) Content {

@@ -18,6 +18,10 @@ mise-bump-action における**確定済みの判断**を1ファイル1決定で
 | [0008](0008-single-retry-on-rate-limit.md) | GitHub API呼び出しは403/429を`Retry-After`に従って一度だけリトライする | 信頼性 |
 | [0009](0009-line-based-mise-toml-rewrite.md) | `mise.toml`の書き換えはTOMLライブラリでの完全パースではなく正規表現ベースの行単位置換にする | アーキテクチャ |
 | [0010](0010-pr-lifecycle-respects-closed-prs-and-closes-superseded.md) | closeされたPRは再生成せず、古いバージョンのPRはsupersededとして自動closeする | UX/信頼性 |
+| [0011](0011-build-provenance-attestation.md) | バイナリの真正性はGitHub Artifact Attestation(Sigstore)で検証する | セキュリティ |
+| [0012](0012-ignore-and-max-open-prs-inputs.md) | `ignore`(ツール除外)と`max-open-prs`(PR数上限)を入力として追加する | UX |
+| [0013](0013-per-entry-skip-for-unsupported-value-forms.md) | 未対応の値形式(inline table/array)は個別エントリだけスキップし、グループ全体を失敗させない | 信頼性 |
+| [0014](0014-pr-body-truncation.md) | PR本文はGitHubの65,536文字上限に合わせて切り詰める | 信頼性 |
 
 ## 書き方
 
