@@ -4,7 +4,7 @@
 [`plans/2026-09-11-mise-bump-action-implementation.md`](plans/2026-09-11-mise-bump-action-implementation.md)
 の各Taskの「実施後の追補」を参照。
 
-## moqがgo.mod `go 1.27.1`と組み合わさると失敗する
+## moqがgo.mod `go 1.27`以降と組み合わさると失敗する(解決済み: go.modをgo 1.26系に固定)
 
 **症状:**
 
@@ -15,17 +15,20 @@ internal error: package "context" without types was imported
 `go generate`で`mocks.go`を再生成しようとすると、moq(v0.6.0/v0.7.1いずれも)がこのエラーで落ちる。
 
 **原因:** moqが内部で使う`golang.org/x/tools`のpackage loaderが、`go.mod`の`go`ディレクティブが
-`1.27.1`(2026-09時点の最新)の場合に対応できていない。
+`1.27`以降の場合に対応できていない([matryer/moq#246](https://github.com/matryer/moq/issues/246)、
+2026-09-09時点でopen)。修正コミット(`51bed092a2bd1eaecca4ffe2b91ab1c4eec59741`,
+[#245](https://github.com/matryer/moq/pull/245))はmainにマージ済みだが、これを含む
+`v0.7.2`はまだリリースされていない。
 
-**回避策:** `go.mod`の`go`ディレクティブを一時的に`1.25.0`まで下げてからmoqを実行し、生成完了後に
-`1.27.1`へ戻す。生成された`mocks.go`ファイル自体は`go`ディレクティブの値に依存しないため、
-この手順で問題なく元のGoバージョンに戻せる。
+一方、Go 1.26対応自体は[#242](https://github.com/matryer/moq/pull/242)で`v0.7.1`(現在
+pinしているタグ)に既に含まれており、`go.mod`の`go`ディレクティブが`1.26.x`であれば
+moq v0.7.1はエラー無く動く。
 
-```bash
-# go.mod の go ディレクティブを 1.25.0 に一時変更
-go generate ./...
-# go.mod の go ディレクティブを 1.27.1 に戻す
-```
+**対応:** `go.mod`の`go`ディレクティブを`1.26.8`に固定し、v0.7.2がリリースされ次第
+`1.27.x`へ戻すか、v0.7.2にpinし直す。一時的なgo.mod書き換えは不要になった。
+
+以前の回避策(生成のたびに`go.mod`を`1.25.0`へ一時的に下げて戻す)は、この対応により
+不要になったため廃止した。
 
 ## `GITHUB_TOKEN`が作成したPRのworkflow runが`action_required`になる
 
