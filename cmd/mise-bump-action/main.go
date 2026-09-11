@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sgash708/mise-bump-action/internal/config"
@@ -49,7 +51,21 @@ func main() {
 		}
 	}
 
-	if err := run(context.Background(), cfg, os.Stderr, summary, outdated.Run, gh); err != nil {
+	// $GITHUB_OUTPUT is how a composite action step exposes step outputs
+	// (action.yml wires them up as `pr-numbers`/`opened-count`). Absent
+	// outside GitHub Actions, in which case outputs are simply discarded.
+	output := io.Writer(io.Discard)
+	if path := os.Getenv("GITHUB_OUTPUT"); path != "" {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to open GITHUB_OUTPUT (%v); outputs will not be set\n", err)
+		} else {
+			defer func() { _ = f.Close() }()
+			output = f
+		}
+	}
+
+	if err := run(context.Background(), cfg, os.Stderr, summary, output, outdated.Run, gh); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -60,7 +76,7 @@ func main() {
 // binary.
 type lookupFunc func(ctx context.Context, repoRoot, configPath string) ([]outdated.Entry, error)
 
-func run(ctx context.Context, cfg config.Config, stderr, summary io.Writer, lookup lookupFunc, gh runner.GitHub) error {
+func run(ctx context.Context, cfg config.Config, stderr, summary, output io.Writer, lookup lookupFunc, gh runner.GitHub) error {
 	var allEntries []outdated.Entry
 	for _, path := range cfg.MiseConfigPaths {
 		entries, err := lookup(ctx, ".", path)
@@ -72,10 +88,12 @@ func run(ctx context.Context, cfg config.Config, stderr, summary io.Writer, look
 
 	if len(allEntries) == 0 {
 		_, _ = fmt.Fprintln(stderr, "no outdated mise-managed tools found")
+		writeOutputs(output, nil)
 		return nil
 	}
 
 	numbers, err := runner.Run(ctx, cfg, allEntries, gh, summary)
+	writeOutputs(output, numbers)
 	if err != nil {
 		return fmt.Errorf("failed to bump some outdated tools (opened %d pull request(s) successfully): %w", len(numbers), err)
 	}
@@ -87,4 +105,17 @@ func run(ctx context.Context, cfg config.Config, stderr, summary io.Writer, look
 
 	_, _ = fmt.Fprintf(stderr, "opened %d pull request(s): %v\n", len(numbers), numbers)
 	return nil
+}
+
+// writeOutputs sets this action's `pr-numbers` (comma-separated) and
+// `opened-count` outputs, in the `name=value` line format GITHUB_OUTPUT
+// expects. Written even when Run returned a partial-failure error, so
+// callers can see what did succeed.
+func writeOutputs(output io.Writer, numbers []int) {
+	strs := make([]string, len(numbers))
+	for i, n := range numbers {
+		strs[i] = strconv.Itoa(n)
+	}
+	_, _ = fmt.Fprintf(output, "opened-count=%d\n", len(numbers))
+	_, _ = fmt.Fprintf(output, "pr-numbers=%s\n", strings.Join(strs, ","))
 }

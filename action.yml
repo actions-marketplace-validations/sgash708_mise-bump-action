@@ -31,6 +31,14 @@ inputs:
     required: false
     default: "0"
 
+outputs:
+  pr-numbers:
+    description: "Comma-separated pull request numbers opened this run (empty if none)"
+    value: ${{ steps.run.outputs.pr-numbers }}
+  opened-count:
+    description: "How many pull requests were opened this run"
+    value: ${{ steps.run.outputs.opened-count }}
+
 runs:
   using: "composite"
   steps:
@@ -67,6 +75,7 @@ runs:
         mv "mise-bump-action_linux_${arch}" mise-bump-action
 
     - name: Run mise-bump-action
+      id: run
       shell: bash
       env:
         INPUT_MISE_CONFIG_PATH: ${{ inputs.mise-config-path }}

@@ -30,6 +30,7 @@ func TestRun(t *testing.T) {
 		wantErr          bool
 		wantErrSubstr    string
 		wantStderrSubstr string
+		wantOutput       string
 	}{
 		{
 			name: "reports no outdated tools without calling github",
@@ -44,6 +45,7 @@ func TestRun(t *testing.T) {
 				},
 			},
 			wantStderrSubstr: "no outdated mise-managed tools found",
+			wantOutput:       "opened-count=0\npr-numbers=\n",
 		},
 		{
 			name: "opens PRs for outdated tools",
@@ -60,6 +62,7 @@ func TestRun(t *testing.T) {
 				},
 			},
 			wantStderrSubstr: "opened 1 pull request(s)",
+			wantOutput:       "opened-count=1\npr-numbers=7\n",
 		},
 		{
 			name: "propagates lookup error",
@@ -94,14 +97,15 @@ func TestRun(t *testing.T) {
 				},
 			},
 			wantStderrSubstr: "[dry-run] no pull requests were created",
+			wantOutput:       "opened-count=0\npr-numbers=\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var stderr, summary bytes.Buffer
+			var stderr, summary, output bytes.Buffer
 
-			err := run(context.Background(), tt.cfg, &stderr, &summary, tt.lookup, tt.gh)
+			err := run(context.Background(), tt.cfg, &stderr, &summary, &output, tt.lookup, tt.gh)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected an error, got nil")
@@ -116,6 +120,9 @@ func TestRun(t *testing.T) {
 			}
 			if tt.wantStderrSubstr != "" && !strings.Contains(stderr.String(), tt.wantStderrSubstr) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderrSubstr)
+			}
+			if tt.wantOutput != "" && output.String() != tt.wantOutput {
+				t.Errorf("output = %q, want %q", output.String(), tt.wantOutput)
 			}
 		})
 	}

@@ -166,6 +166,7 @@ func TestE2E_OpensRealPullRequest(t *testing.T) {
 	srv := mockGitHub(t, &requests)
 	defer srv.Close()
 
+	outputFile := filepath.Join(repoDir, "github-output")
 	cmd := exec.Command(bin)
 	cmd.Dir = repoDir
 	cmd.Env = append(os.Environ(),
@@ -174,6 +175,7 @@ func TestE2E_OpensRealPullRequest(t *testing.T) {
 		"GITHUB_REPOSITORY=sgash708/e2e-example",
 		"GITHUB_API_URL="+srv.URL,
 		"GITHUB_REF_NAME=main",
+		"GITHUB_OUTPUT="+outputFile,
 		"INPUT_MISE_CONFIG_PATH=mise.toml",
 		"INPUT_PR_STRATEGY=per-tool",
 		"INPUT_LABELS=dependencies",
@@ -185,6 +187,14 @@ func TestE2E_OpensRealPullRequest(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "opened 1 pull request(s): [7]") {
 		t.Errorf("expected stdout to report the opened PR, got:\n%s", out)
+	}
+
+	outputs, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("failed to read GITHUB_OUTPUT file: %v", err)
+	}
+	if !strings.Contains(string(outputs), "opened-count=1") || !strings.Contains(string(outputs), "pr-numbers=7") {
+		t.Errorf("expected GITHUB_OUTPUT to record the opened PR, got:\n%s", outputs)
 	}
 
 	var createPR, putFile *recordedRequest

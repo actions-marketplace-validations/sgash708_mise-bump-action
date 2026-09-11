@@ -22,6 +22,7 @@ mise-bump-action における**確定済みの判断**を1ファイル1決定で
 | [0012](0012-ignore-and-max-open-prs-inputs.md) | `ignore`(ツール除外)と`max-open-prs`(PR数上限)を入力として追加する | UX |
 | [0013](0013-per-entry-skip-for-unsupported-value-forms.md) | 未対応の値形式(inline table/array)は個別エントリだけスキップし、グループ全体を失敗させない | 信頼性 |
 | [0014](0014-pr-body-truncation.md) | PR本文はGitHubの65,536文字上限に合わせて切り詰める | 信頼性 |
+| [0015](0015-pr-numbers-opened-count-outputs.md) | `pr-numbers`/`opened-count`をaction outputとして公開する | UX |
 
 ## 書き方
 

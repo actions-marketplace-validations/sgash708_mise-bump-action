@@ -2,6 +2,10 @@
 
 [English](README.md) | **日本語**
 
+[![Marketplace](https://img.shields.io/badge/marketplace-mise--bump--action-blue?logo=github)](https://github.com/marketplace/actions/mise-bump-action)
+[![CI](https://github.com/sgash708/mise-bump-action/actions/workflows/ci.yml/badge.svg)](https://github.com/sgash708/mise-bump-action/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 [mise](https://mise.jdx.dev/) (`mise.toml`) で管理しているツールのバージョンを、
 [Dependabot](https://docs.github.com/en/code-security/dependabot) と同じPR体裁で自動追従させるGitHub Action。
 
@@ -100,6 +104,19 @@ GitHubは既定で「Actionsがpull requestを作成できる」設定を無効�
 | `dry-run` | `true`にするとブランチ/PRを作成せず、意図したPRのタイトル・本文・diffをjob summaryに出力する | `false` |
 | `ignore` | 恒久的に除外するツール名パターン(カンマ区切り)。完全一致、または末尾`*`の前方一致(例: `terraform,aqua:foo/*`) | (なし) |
 | `max-open-prs` | 同時に開いていてよいbump PR(`labels`を持つもの)の上限数。既存のPRも数に含む。`0`は無制限 | `0` |
+
+## Outputs
+
+| output | 説明 |
+|---|---|
+| `pr-numbers` | 今回開いたPR番号(カンマ区切り、無ければ空) |
+| `opened-count` | 今回開いたPRの数 |
+
+```yaml
+- uses: sgash708/mise-bump-action@v1
+  id: bump
+- run: echo "Opened ${{ steps.bump.outputs.opened-count }} PR(s): ${{ steps.bump.outputs.pr-numbers }}"
+```
 
 ## PRのライフサイクル
 

@@ -2,6 +2,10 @@
 
 **English** | [日本語](README.ja.md)
 
+[![Marketplace](https://img.shields.io/badge/marketplace-mise--bump--action-blue?logo=github)](https://github.com/marketplace/actions/mise-bump-action)
+[![CI](https://github.com/sgash708/mise-bump-action/actions/workflows/ci.yml/badge.svg)](https://github.com/sgash708/mise-bump-action/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A GitHub Action that keeps tools managed by [mise](https://mise.jdx.dev/) (`mise.toml`) up to date, opening pull requests in the same style as [Dependabot](https://docs.github.com/en/code-security/dependabot).
 
 Dependabot's `dependabot.yml` only understands its own built-in `package-ecosystem` list and can't see `mise.toml`. This action delegates version resolution to `mise` itself (`mise outdated`) and opens a Dependabot-style pull request for every tool that's behind.
@@ -84,6 +88,19 @@ See [examples/](examples/README.md) for details on each pattern.
 | `dry-run` | If `true`, print the intended pull request title/body/diff to the job summary without creating any branch or pull request | `false` |
 | `ignore` | Comma-separated tool-name patterns to never bump: an exact name, or a prefix ending in `*` (e.g. `terraform,aqua:foo/*`) | `` (none) |
 | `max-open-prs` | Cap on how many bump pull requests (carrying `labels`) may be open at once; existing ones count toward it. `0` means unlimited | `0` |
+
+## Outputs
+
+| output | description |
+|---|---|
+| `pr-numbers` | Comma-separated pull request numbers opened this run (empty if none) |
+| `opened-count` | How many pull requests were opened this run |
+
+```yaml
+- uses: sgash708/mise-bump-action@v1
+  id: bump
+- run: echo "Opened ${{ steps.bump.outputs.opened-count }} PR(s): ${{ steps.bump.outputs.pr-numbers }}"
+```
 
 ## Pull request lifecycle
 
