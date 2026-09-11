@@ -108,10 +108,6 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 		}
 	}
 
-	// prtext only renders the full release-notes/commits <details> blocks for
-	// a single-entry PR (buildGrouped only ever uses Enrichment.RepoURL, a
-	// pure string derivation with no API call); fetching them for a grouped
-	// bump would be pure waste, so skip it there.
 	fetchFullDetails := len(group.Entries) == 1
 	enrichment := buildEnrichment(ctx, gh, group.Entries, fetchFullDetails)
 	text := prtext.Build(group.Entries, multiConfig, enrichment)

@@ -14,6 +14,9 @@ mise-bump-action における**確定済みの判断**を1ファイル1決定で
 | [0004](0004-v0-single-platform-prebuilt-binary.md) | v0はlinux/amd64向け事前ビルドバイナリのみで配布し、将来のマルチプラットフォーム移行に備えてインターフェースを固定する | 配布 |
 | [0005](0005-conventional-commits-release-notes.md) | リリースノートはgit logからConventional Commitsのprefixで自作生成する | リリース |
 | [0006](0006-outdated-bump-field-over-latest.md) | `mise outdated --json`は`latest`ではなく`bump`フィールドを優先して使う | 正確性 |
+| [0007](0007-sanitize-upstream-release-body.md) | アップストリームrelease本文の@メンション/#issue参照をサニタイズしてから埋め込む | セキュリティ/UX |
+| [0008](0008-single-retry-on-rate-limit.md) | GitHub API呼び出しは403/429を`Retry-After`に従って一度だけリトライする | 信頼性 |
+| [0009](0009-line-based-mise-toml-rewrite.md) | `mise.toml`の書き換えはTOMLライブラリでの完全パースではなく正規表現ベースの行単位置換にする | アーキテクチャ |
 
 ## 書き方
 

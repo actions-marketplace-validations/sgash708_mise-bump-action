@@ -18,14 +18,10 @@ type releaseEntry struct {
 }
 
 // ReleaseNotesHTML renders a Dependabot-style "Release notes" <details>
-// block for repo (any public "owner/repo"), covering releases strictly
-// after fromVersion up to and including toVersion. It returns ok=false if
-// repo has no releases, toVersion can't be found among the first page of
-// releases, or the request fails — release-notes enrichment is best-effort
-// and must never fail the overall bump. It never panics: GitHub's /releases
-// list is ordered by creation time, not by version, so a backport can put
-// fromVersion at a lower index than toVersion; that case degrades to "from
-// not usefully found" rather than panicking on an inverted slice range.
+// block for repo, covering releases from fromVersion (exclusive) to
+// toVersion (inclusive). Returns ok=false if enrichment isn't available;
+// this is best-effort and must never fail the overall bump. Never panics on
+// GitHub's non-chronological /releases ordering (see troubleshooting.md).
 func (c *Client) ReleaseNotesHTML(ctx context.Context, repo, fromVersion, toVersion string) (result string, ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -92,15 +88,8 @@ var (
 	issueRefPattern = regexp.MustCompile(`(^|[^A-Za-z0-9/])#(\d+)`)
 )
 
-// sanitizeReleaseBody neutralizes patterns in an upstream release body that
-// GitHub would otherwise interpret against *this* repo when the body is
-// embedded in a PR here: bare "@user" would notify that user as if they were
-// mentioned in this PR, and bare "#123" would cross-link to this repo's
-// issue/PR #123 instead of the upstream one. Both are rewritten the same way
-// Dependabot does: a zero-width space breaks the mention, and issue
-// references become explicit links to the upstream repo via
-// redirect.github.com (which does not trigger a cross-reference notification
-// on the target issue).
+// sanitizeReleaseBody rewrites @mentions and #issue references so they
+// resolve against the upstream repo instead of this one (ADR 0007).
 func sanitizeReleaseBody(body, repo string) string {
 	body = mentionPattern.ReplaceAllString(body, "@\u200b$1")
 	body = issueRefPattern.ReplaceAllString(body, fmt.Sprintf("$1[#$2](https://redirect.github.com/%s/issues/$2)", repo))

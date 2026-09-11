@@ -17,10 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # `--generate-notes`(PRベースの集計)は、mainへ直pushする本リポジトリの
-          # 運用だと空またはbotのPRしか拾わず実態を反映しない(ADR未記載、plan文書の
-          # Task 24追補参照)。git logからConventional Commitsのprefixで分類した
-          # ノートを自作するため、tag履歴を含む全履歴が必要。
+          # 全履歴が必要(ADR 0005: リリースノートはgit logから自作生成する)。
           fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -57,12 +54,8 @@ jobs:
               label="${entry#*:}"
               # "!" marks a breaking change (e.g. "feat!:" or "fix(scope)!:"),
               # which must still classify under its base type.
-              # Wrap any "@name" in commit subjects in backticks so GitHub
-              # renders it as inline code instead of autolinking/notifying a
-              # real account and crediting it as a release "Contributor" —
-              # bit us for real with a commit subject that literally said
-              # "@v0" (the floating major tag), which GitHub resolved to an
-              # unrelated existing user named "v0".
+              # Wrap "@name" in backticks so GitHub doesn't autolink/notify a
+              # real account (ADR 0007; troubleshooting.md has the incident).
               # shellcheck disable=SC2016 # \1 here is a sed backreference, not a shell expansion
               commits=$(git log "$range" --no-merges --pretty=format:"- %s (%h)" --grep "^${prefix}(\(.*\))?!?:" -E | sed -E 's/@([A-Za-z0-9](-?[A-Za-z0-9])*)/`@\1`/g')
               if [ -n "$commits" ]; then

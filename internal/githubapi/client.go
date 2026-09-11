@@ -60,13 +60,8 @@ func NewClient(httpClient *http.Client, apiURL, token, repo string) *Client {
 	}
 }
 
-// do issues one GitHub API request, retrying exactly once if the response is
-// a rate limit (403 or 429) that includes a Retry-After header — GitHub
-// returns 403 (not just 429) for both the secondary rate limit and abuse
-// detection mechanisms. A single retry is enough for the transient limits
-// this action realistically hits (a handful of API calls per run); anything
-// beyond that is treated as a genuine failure rather than retried
-// indefinitely.
+// do issues one GitHub API request, retrying exactly once on a rate-limited
+// (403 or 429) response that includes a Retry-After header (ADR 0008).
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	var bodyBytes []byte
 	if body != nil {
@@ -175,17 +170,15 @@ func (c *Client) ReadFile(ctx context.Context, path, ref string) ([]byte, string
 	return decoded, out.SHA, nil
 }
 
-// OpenBumpPR is idempotent with respect to in.BranchName:
+// OpenBumpPR is idempotent with respect to in.BranchName (see
+// troubleshooting.md, "422 Reference already exists"):
 //
 //   - If a pull request is already open from in.BranchName into
 //     in.BaseBranch, its number is returned immediately with no further
-//     writes. This is what keeps a rerun against still-open PRs from
-//     erroring with "422 Reference already exists" instead of silently
-//     succeeding.
-//   - Otherwise, if in.BranchName exists without an open PR (e.g. left over
-//     from a run that failed after creating the branch but before opening
-//     the PR), the stale branch is deleted and recreated from the current
-//     in.BaseBranch so its content isn't stale.
+//     writes.
+//   - Otherwise, if in.BranchName exists without an open PR (left over from
+//     a run that failed after creating the branch but before opening the
+//     PR), the stale branch is deleted and recreated from in.BaseBranch.
 //   - Then it creates the branch, commits in.FileContent to in.FilePath,
 //     opens a pull request, and applies in.Labels.
 func (c *Client) OpenBumpPR(ctx context.Context, in runner.BumpPRInput) (int, error) {
