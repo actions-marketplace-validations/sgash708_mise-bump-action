@@ -46,12 +46,6 @@ func TestGroup(t *testing.T) {
 			wantPerSize: []int{3},
 		},
 		{
-			// bumpGroup rewrites a single file per group (see
-			// runner.bumpGroup), so Single must not bundle entries from
-			// different mise-config-path files into one group: entries from
-			// the second file would fail with "not found" against the first
-			// file's content, or worse, silently corrupt it if both files
-			// happen to share a tool name.
 			name: "single sub-groups by file when multiple mise-config-path files are involved",
 			entries: entriesWithPaths(
 				[2]string{"go", "backend/mise.toml"},

@@ -83,10 +83,6 @@ func TestFromEnv(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// Neither base-branch nor GITHUB_REF_NAME is set: with no fallback
-			// left, BaseBranch would end up "" and later fail confusingly deep
-			// inside the GitHub API call (404 on /git/ref/heads/). Reject it here
-			// instead, where the cause is obvious.
 			name: "missing base branch returns error",
 			env: map[string]string{
 				"GITHUB_TOKEN":      "tok",
@@ -95,10 +91,6 @@ func TestFromEnv(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// On a pull_request event, GITHUB_REF_NAME is "123/merge", not a
-			// real branch. Using it as BaseBranch would silently target a
-			// nonexistent branch, so it must be rejected rather than passed
-			// through.
 			name: "pull_request-shaped GITHUB_REF_NAME returns error",
 			env: map[string]string{
 				"GITHUB_TOKEN":      "tok",

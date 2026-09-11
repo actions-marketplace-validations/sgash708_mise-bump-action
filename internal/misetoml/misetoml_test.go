@@ -81,10 +81,6 @@ func TestBump(t *testing.T) {
 			want:       "[tools]\ngo = \"1.27.0\"",
 		},
 		{
-			// The key exists but its value isn't a simple quoted version
-			// string (e.g. an inline table or array) — mise.toml supports
-			// these forms but Bump doesn't. The error must say so distinctly
-			// from "key not found at all", so a user isn't left guessing.
 			name:          "clear error when the key's value is not a simple version string",
 			content:       "[tools]\ngo = { version = \"1.26.1\" }\n",
 			toolKey:       "go",

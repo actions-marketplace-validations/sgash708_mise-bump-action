@@ -54,10 +54,6 @@ func TestReleaseNotesHTML(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			// GitHub's /releases list is ordered by creation time, not by
-			// version. A backport release created after the newer version
-			// appears at a LOWER index than it (i.e. fromIdx < toIdx), which
-			// must not panic on releases[toIdx:fromIdx].
 			name: "from appears at a lower index than to in the list (backport) does not panic",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				_ = json.NewEncoder(w).Encode([]map[string]string{

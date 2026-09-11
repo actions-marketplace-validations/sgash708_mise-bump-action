@@ -49,10 +49,7 @@ func TestParse(t *testing.T) {
 			want:       nil,
 		},
 		{
-			// A fuzzy pin like "2.12" only constrains to the 2.12.x family. mise's
-			// "bump" field respects that (next in-family version), while "latest"
-			// is the unconstrained newest release. Using "latest" here would
-			// needlessly narrow the user's fuzzy pin into an exact one.
+			// ADR 0006
 			name: "uses bump instead of latest for a fuzzy pin",
 			inlineJSON: `{
 				"node": {
@@ -68,12 +65,7 @@ func TestParse(t *testing.T) {
 			want:       []Entry{{Name: "node", Requested: "2.12", Latest: "2.13", RelPath: "mise.toml"}},
 		},
 		{
-			// mise merges mise.toml files from parent directories and the global
-			// config (~/.config/mise/config.toml) into the same `mise outdated`
-			// result. Only entries whose source matches the exact file we were
-			// asked to check should be reported; everything else must be
-			// filtered out, or a single mise-config-path input would silently
-			// also bump unrelated tools declared elsewhere.
+			// troubleshooting.md
 			name: "excludes entries from a merged parent or global config",
 			inlineJSON: `{
 				"go": {
@@ -127,11 +119,9 @@ func TestParse(t *testing.T) {
 	}
 }
 
-// installFakeMise writes script as an executable file named "mise" in a
-// fresh temp dir and prepends that dir to PATH for the duration of the test.
-// This exercises Run's real exec.CommandContext invocation (argument order,
-// stdout/stderr separation, exit code handling) without depending on the
-// real mise CLI being installed or trusted.
+// installFakeMise writes script as "mise" in a fresh temp dir and prepends
+// it to PATH, so Run's real exec.CommandContext invocation runs against a
+// stand-in instead of requiring the real mise CLI.
 func installFakeMise(t *testing.T, script string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
