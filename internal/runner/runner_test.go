@@ -178,6 +178,44 @@ func TestRun(t *testing.T) {
 			wantErr:       true,
 			wantErrSubstr: "boom",
 		},
+		{
+			name:    "passes a version-independent branch prefix for a single-entry group",
+			cfg:     config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main"},
+			entries: []outdated.Entry{{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"}},
+			newGitHub: func(t *testing.T) *GitHubMock {
+				return &GitHubMock{
+					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+						return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
+					},
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+						if in.BranchPrefix != "mise-bump/go-" {
+							t.Errorf("BranchPrefix = %q, want %q", in.BranchPrefix, "mise-bump/go-")
+						}
+						return 1, nil
+					},
+				}
+			},
+			wantPRCount: 1,
+		},
+		{
+			name:    "leaves branch prefix empty for a grouped bump",
+			cfg:     config.Config{PRStrategy: grouping.Single, BaseBranch: "main"},
+			entries: twoEntries,
+			newGitHub: func(t *testing.T) *GitHubMock {
+				return &GitHubMock{
+					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+						return []byte(baseContent), "blobsha", nil
+					},
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+						if in.BranchPrefix != "" {
+							t.Errorf("BranchPrefix = %q, want empty for a grouped bump", in.BranchPrefix)
+						}
+						return 1, nil
+					},
+				}
+			},
+			wantPRCount: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -200,6 +238,36 @@ func TestRun(t *testing.T) {
 				t.Fatalf("expected %d PR numbers, got %d: %+v", tt.wantPRCount, len(numbers), numbers)
 			}
 		})
+	}
+}
+
+func TestRun_SkipsClosedPreviouslyWithoutFailing(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+		{Name: "node", Requested: "24.12.0", Latest: "24.13.0", RelPath: "mise.toml"},
+	}
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\n"), "blobsha", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			if strings.Contains(in.PRTitle, "go") {
+				return 0, ErrClosedPreviously
+			}
+			return 5, nil
+		},
+	}
+	var out bytes.Buffer
+
+	numbers, err := Run(context.Background(), config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main"}, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v, want nil (a previously-closed bump is not a failure)", err)
+	}
+	if len(numbers) != 1 || numbers[0] != 5 {
+		t.Errorf("numbers = %+v, want [5] (the skipped bump must not appear)", numbers)
+	}
+	if !strings.Contains(out.String(), "previously closed") {
+		t.Errorf("expected a skip notice in out, got:\n%s", out.String())
 	}
 }
 

@@ -172,14 +172,23 @@ func (c *Client) ReadFile(ctx context.Context, path, ref string) ([]byte, string
 
 // OpenBumpPR is idempotent with respect to in.BranchName (see
 // troubleshooting.md, "422 Reference already exists"): an existing open PR
-// short-circuits with no writes, a stale branch is deleted and recreated,
-// and otherwise it creates the branch, commits, opens the PR, and applies
-// in.Labels.
+// short-circuits with no writes, a previously-closed-without-merging PR
+// returns runner.ErrClosedPreviously with no writes, a stale branch is
+// deleted and recreated, and otherwise it creates the branch, commits,
+// opens the PR, and applies in.Labels. When in.BranchPrefix is set, any
+// other open PR sharing that prefix (an older version of the same tool) is
+// closed with a comment pointing at the new PR.
 func (c *Client) OpenBumpPR(ctx context.Context, in runner.BumpPRInput) (int, error) {
 	if number, exists, err := c.findOpenPR(ctx, in.BaseBranch, in.BranchName); err != nil {
 		return 0, err
 	} else if exists {
 		return number, nil
+	}
+
+	if closed, err := c.findClosedUnmergedPR(ctx, in.BaseBranch, in.BranchName); err != nil {
+		return 0, err
+	} else if closed {
+		return 0, runner.ErrClosedPreviously
 	}
 
 	baseSHA, err := c.getRefSHA(ctx, in.BaseBranch)
@@ -208,6 +217,9 @@ func (c *Client) OpenBumpPR(ctx context.Context, in runner.BumpPRInput) (int, er
 	if err := c.addLabels(ctx, number, in.Labels); err != nil {
 		return 0, err
 	}
+	if in.BranchPrefix != "" {
+		c.closeSupersededPRs(ctx, in.BaseBranch, in.BranchPrefix, in.BranchName, number)
+	}
 	return number, nil
 }
 
@@ -226,6 +238,51 @@ func (c *Client) findOpenPR(ctx context.Context, base, branch string) (number in
 		return 0, false, nil
 	}
 	return out[0].Number, true, nil
+}
+
+// findClosedUnmergedPR reports whether a pull request from branch into base
+// was previously closed without being merged (runner.ErrClosedPreviously).
+func (c *Client) findClosedUnmergedPR(ctx context.Context, base, branch string) (bool, error) {
+	owner, _, _ := strings.Cut(c.repo, "/")
+	var out []struct {
+		MergedAt *string `json:"merged_at"`
+	}
+	path := fmt.Sprintf("/repos/%s/pulls?state=closed&base=%s&head=%s:%s",
+		c.repo, url.QueryEscape(base), url.QueryEscape(owner), url.QueryEscape(branch))
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return false, fmt.Errorf("failed to check for a previously closed pull request for branch %s: %w", branch, err)
+	}
+	for _, pr := range out {
+		if pr.MergedAt == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// closeSupersededPRs closes every other open PR into base whose branch
+// starts with prefix (an older version of the same tool as excludeBranch),
+// commenting that it was superseded by newNumber. Best-effort: the new PR
+// (already open at this point) is not affected by any failure here.
+func (c *Client) closeSupersededPRs(ctx context.Context, base, prefix, excludeBranch string, newNumber int) {
+	var out []struct {
+		Number int `json:"number"`
+		Head   struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
+	}
+	path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100", c.repo, url.QueryEscape(base))
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return
+	}
+	for _, pr := range out {
+		if pr.Head.Ref == excludeBranch || !strings.HasPrefix(pr.Head.Ref, prefix) {
+			continue
+		}
+		_ = c.do(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/pulls/%d", c.repo, pr.Number), map[string]string{"state": "closed"}, nil)
+		comment := map[string]string{"body": fmt.Sprintf("Superseded by #%d.", newNumber)}
+		_ = c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", c.repo, pr.Number), comment, nil)
+	}
 }
 
 // branchSHA returns the branch's current commit SHA, or exists=false if the

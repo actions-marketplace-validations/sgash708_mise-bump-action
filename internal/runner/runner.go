@@ -32,7 +32,19 @@ type BumpPRInput struct {
 	PRTitle       string
 	PRBody        string
 	Labels        []string
+	// BranchPrefix, when non-empty, identifies this bump's tool independent
+	// of version (e.g. "mise-bump/go-"). Implementations use it to find and
+	// close other open PRs for the same tool at an older version (a newer
+	// bump supersedes them). Empty for grouped bumps, where no single
+	// branch-name prefix identifies "this tool".
+	BranchPrefix string
 }
+
+// ErrClosedPreviously is returned by GitHub.OpenBumpPR when a pull request
+// for this exact bump (same branch name, i.e. same tool and target version)
+// was previously closed without being merged. Matches Dependabot: closing a
+// PR without merging means "don't reopen this exact version."
+var ErrClosedPreviously = errors.New("a pull request for this bump was previously closed without merging; not reopening it")
 
 // GitHub is the set of GitHub operations runner.Run needs. internal/githubapi
 // provides the real implementation; tests use a moq-generated mock.
@@ -69,14 +81,15 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 	var errs []error
 
 	for _, group := range groups {
-		number, err := bumpGroup(ctx, cfg, group, multiConfig, gh, out)
+		number, skipped, err := bumpGroup(ctx, cfg, group, multiConfig, gh, out)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		if !cfg.DryRun {
-			prNumbers = append(prNumbers, number)
+		if skipped || cfg.DryRun {
+			continue
 		}
+		prNumbers = append(prNumbers, number)
 	}
 
 	if len(errs) > 0 {
@@ -87,20 +100,22 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 
 // bumpGroup reads the group's shared mise.toml, applies every entry's bump,
 // renders PR text (with best-effort enrichment), and either opens the pull
-// request or, in dry-run mode, writes a preview of it to out.
-func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, multiConfig bool, gh GitHub, out io.Writer) (int, error) {
+// request or, in dry-run mode, writes a preview of it to out. skipped is
+// true when GitHub reports the exact bump was previously closed without
+// merging (ErrClosedPreviously) — not a failure, just nothing to do.
+func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, multiConfig bool, gh GitHub, out io.Writer) (number int, skipped bool, err error) {
 	path := group.Entries[0].RelPath
 
 	before, sha, err := gh.ReadFile(ctx, path, cfg.BaseBranch)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read %s: %w", path, err)
+		return 0, false, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
 	after := before
 	for _, e := range group.Entries {
 		after, err = misetoml.Bump(after, e.Name, e.Requested, e.Latest)
 		if err != nil {
-			return 0, fmt.Errorf("failed to bump %s in %s: %w", e.Name, path, err)
+			return 0, false, fmt.Errorf("failed to bump %s in %s: %w", e.Name, path, err)
 		}
 	}
 
@@ -111,12 +126,13 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 
 	if cfg.DryRun {
 		writeDryRunPreview(out, path, branch, text, before, after)
-		return 0, nil
+		return 0, false, nil
 	}
 
-	number, err := gh.OpenBumpPR(ctx, BumpPRInput{
+	number, err = gh.OpenBumpPR(ctx, BumpPRInput{
 		BaseBranch:    cfg.BaseBranch,
 		BranchName:    branch,
+		BranchPrefix:  branchPrefix(group.Entries),
 		FilePath:      path,
 		FileContent:   after,
 		FileSHA:       sha,
@@ -125,10 +141,14 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 		PRBody:        text.Body,
 		Labels:        cfg.Labels,
 	})
-	if err != nil {
-		return 0, fmt.Errorf("failed to open pull request for branch %s: %w", branch, err)
+	if errors.Is(err, ErrClosedPreviously) {
+		_, _ = fmt.Fprintf(out, "## [skipped] %s\n\nA pull request for **%s** was previously closed without merging; not reopening it.\n\n", path, text.Title)
+		return 0, true, nil
 	}
-	return number, nil
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to open pull request for branch %s: %w", branch, err)
+	}
+	return number, false, nil
 }
 
 // writeDryRunPreview renders what bumpGroup would have opened as a pull
@@ -205,6 +225,16 @@ func branchName(entries []outdated.Entry) string {
 		_, _ = fmt.Fprintf(h, "%s@%s;", e.Name, e.Latest)
 	}
 	return fmt.Sprintf("mise-bump/batch-%x", h.Sum32())
+}
+
+// branchPrefix returns the version-independent prefix of branchName's
+// single-entry form (e.g. "mise-bump/go-"), or "" for a grouped bump, where
+// no single prefix identifies "this tool" across versions.
+func branchPrefix(entries []outdated.Entry) string {
+	if len(entries) != 1 {
+		return ""
+	}
+	return fmt.Sprintf("mise-bump/%s-", sanitize(entries[0].Name))
 }
 
 func sanitize(s string) string {

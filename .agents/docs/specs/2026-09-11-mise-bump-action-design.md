@@ -48,9 +48,12 @@ jobs:
    - `per-tool`(既定): ツールごとに別PR。Dependabotの標準的な挙動に合わせる。
    - `single`: 全ツールの差分を1PRにまとめる。
 3. 各PRについて、GitHub REST APIを直接呼び出し、以下を行う(サードパーティのPR作成action `peter-evans/create-pull-request` 等は使わず、依存を自バイナリのみに閉じてサプライチェーンリスクを下げる)。
+   - 同一ブランチにopen PRがあれば何もせず番号を返す。closeされ(mergeされずに)ているPRが
+     あれば再生成せずスキップする(ADR 0010)。
    - branch作成
    - `.mise.toml`書き換えcommit
    - PR作成
+   - (per-tool戦略のみ)同じツールの古いバージョン向けopen PRがあればsupersededとしてclose
 4. 認証は各利用リポジトリの既定`GITHUB_TOKEN`(`contents: write`, `pull-requests: write`権限)で完結させる。PAT等の追加シークレットは不要。
 
 ## PRフォーマット(Dependabotの実際のPR形式を踏襲)

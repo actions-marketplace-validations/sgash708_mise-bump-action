@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sgash708/mise-bump-action/internal/runner"
@@ -107,21 +109,37 @@ func TestReadFile(t *testing.T) {
 	}
 }
 
+// bumpPRMuxOpts configures newBumpPRMux's canned responses.
+type bumpPRMuxOpts struct {
+	openPRs      []map[string]int // exact-branch state=open lookup response
+	closedPRs    []map[string]any // exact-branch state=closed lookup response (each may set "merged_at")
+	branchExists bool
+	otherOpenPRs []map[string]any // state=open list (no head filter), for superseded-PR search
+}
+
 // newBumpPRMux builds a ServeMux with handlers for every endpoint OpenBumpPR
 // may call, recording each call into *calls in invocation order. Individual
-// tests override specific handlers to exercise existing-PR/stale-branch
-// branches.
-func newBumpPRMux(t *testing.T, calls *[]string, opts struct {
-	openPRs      []map[string]int
-	branchExists bool
-	prNumber     int
-}) *http.ServeMux {
+// tests override specific handlers to exercise existing-PR/closed-PR/
+// stale-branch/superseded-PR branches.
+func newBumpPRMux(t *testing.T, calls *[]string, opts bumpPRMuxOpts) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /repos/sgash708/example/pulls", func(w http.ResponseWriter, r *http.Request) {
-		*calls = append(*calls, "find-open-pr")
-		_ = json.NewEncoder(w).Encode(opts.openPRs)
+		q := r.URL.Query()
+		switch {
+		case q.Get("state") == "closed" && q.Get("head") != "":
+			*calls = append(*calls, "find-closed-pr")
+			_ = json.NewEncoder(w).Encode(opts.closedPRs)
+		case q.Get("state") == "open" && q.Get("head") != "":
+			*calls = append(*calls, "find-open-pr")
+			_ = json.NewEncoder(w).Encode(opts.openPRs)
+		case q.Get("state") == "open":
+			*calls = append(*calls, "list-open-prs")
+			_ = json.NewEncoder(w).Encode(opts.otherOpenPRs)
+		default:
+			t.Fatalf("unexpected GET /pulls query: %s", r.URL.RawQuery)
+		}
 	})
 	mux.HandleFunc("GET /repos/sgash708/example/git/ref/heads/main", func(w http.ResponseWriter, r *http.Request) {
 		*calls = append(*calls, "get-ref")
@@ -156,9 +174,17 @@ func newBumpPRMux(t *testing.T, calls *[]string, opts struct {
 		*calls = append(*calls, "create-pr")
 		_ = json.NewEncoder(w).Encode(map[string]int{"number": 42})
 	})
-	mux.HandleFunc("POST /repos/sgash708/example/issues/42/labels", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PATCH /repos/sgash708/example/pulls/{number}", func(w http.ResponseWriter, r *http.Request) {
+		*calls = append(*calls, "close-pr:"+r.PathValue("number"))
+		_ = json.NewEncoder(w).Encode(map[string]string{})
+	})
+	mux.HandleFunc("POST /repos/sgash708/example/issues/{number}/labels", func(w http.ResponseWriter, r *http.Request) {
 		*calls = append(*calls, "add-labels")
 		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("POST /repos/sgash708/example/issues/{number}/comments", func(w http.ResponseWriter, r *http.Request) {
+		*calls = append(*calls, "comment:"+r.PathValue("number"))
+		_ = json.NewEncoder(w).Encode(map[string]string{})
 	})
 
 	return mux
@@ -166,23 +192,28 @@ func newBumpPRMux(t *testing.T, calls *[]string, opts struct {
 
 func TestOpenBumpPR(t *testing.T) {
 	tests := []struct {
-		name         string
-		labels       []string
-		openPRs      []map[string]int
-		branchExists bool
-		wantCalls    []string
-		wantNumber   int
+		name          string
+		labels        []string
+		branchPrefix  string
+		openPRs       []map[string]int
+		closedPRs     []map[string]any
+		branchExists  bool
+		otherOpenPRs  []map[string]any
+		wantCalls     []string
+		wantNumber    int
+		wantErr       error
+		wantErrSubstr string
 	}{
 		{
 			name:       "calls branch, commit, PR, and labels in order",
 			labels:     []string{"dependencies"},
-			wantCalls:  []string{"find-open-pr", "get-ref", "get-branch-sha", "create-ref", "put-file", "create-pr", "add-labels"},
+			wantCalls:  []string{"find-open-pr", "find-closed-pr", "get-ref", "get-branch-sha", "create-ref", "put-file", "create-pr", "add-labels"},
 			wantNumber: 42,
 		},
 		{
 			name:       "skips add-labels when no labels are configured",
 			labels:     nil,
-			wantCalls:  []string{"find-open-pr", "get-ref", "get-branch-sha", "create-ref", "put-file", "create-pr"},
+			wantCalls:  []string{"find-open-pr", "find-closed-pr", "get-ref", "get-branch-sha", "create-ref", "put-file", "create-pr"},
 			wantNumber: 42,
 		},
 		{
@@ -196,19 +227,53 @@ func TestOpenBumpPR(t *testing.T) {
 			name:         "deletes and recreates a stale branch when no open PR exists",
 			labels:       []string{"dependencies"},
 			branchExists: true,
-			wantCalls:    []string{"find-open-pr", "get-ref", "get-branch-sha", "delete-ref", "create-ref", "put-file", "create-pr", "add-labels"},
+			wantCalls:    []string{"find-open-pr", "find-closed-pr", "get-ref", "get-branch-sha", "delete-ref", "create-ref", "put-file", "create-pr", "add-labels"},
 			wantNumber:   42,
+		},
+		{
+			// Dependabot semantics: closing a PR without merging means "don't
+			// reopen this exact bump." No writes must happen past this check.
+			name:          "returns ErrClosedPreviously and makes no writes when a matching PR was closed unmerged",
+			labels:        []string{"dependencies"},
+			closedPRs:     []map[string]any{{"number": 7, "merged_at": nil}},
+			wantCalls:     []string{"find-open-pr", "find-closed-pr"},
+			wantErr:       runner.ErrClosedPreviously,
+			wantErrSubstr: "previously closed",
+		},
+		{
+			// A closed PR that WAS merged must not block re-proposing the
+			// same bump (e.g. it was merged, then reverted upstream).
+			name:       "proceeds normally when the matching closed PR was merged",
+			labels:     nil,
+			closedPRs:  []map[string]any{{"number": 7, "merged_at": "2026-01-01T00:00:00Z"}},
+			wantCalls:  []string{"find-open-pr", "find-closed-pr", "get-ref", "get-branch-sha", "create-ref", "put-file", "create-pr"},
+			wantNumber: 42,
+		},
+		{
+			// An older open PR for the same tool (different version) must be
+			// closed with a comment once the new PR is open.
+			name:         "closes a superseded open PR for the same tool",
+			labels:       nil,
+			branchPrefix: "mise-bump/go-",
+			otherOpenPRs: []map[string]any{
+				{"number": 10, "head": map[string]string{"ref": "mise-bump/go-1.26.1"}},
+				{"number": 11, "head": map[string]string{"ref": "mise-bump/go-1.27.0"}},   // excludeBranch: must not be touched
+				{"number": 12, "head": map[string]string{"ref": "mise-bump/node-20.0.0"}}, // different tool: must not be touched
+			},
+			wantCalls:  []string{"find-open-pr", "find-closed-pr", "get-ref", "get-branch-sha", "create-ref", "put-file", "create-pr", "list-open-prs", "close-pr:10", "comment:10"},
+			wantNumber: 42,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var calls []string
-			mux := newBumpPRMux(t, &calls, struct {
-				openPRs      []map[string]int
-				branchExists bool
-				prNumber     int
-			}{openPRs: tt.openPRs, branchExists: tt.branchExists})
+			mux := newBumpPRMux(t, &calls, bumpPRMuxOpts{
+				openPRs:      tt.openPRs,
+				closedPRs:    tt.closedPRs,
+				branchExists: tt.branchExists,
+				otherOpenPRs: tt.otherOpenPRs,
+			})
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
 
@@ -217,6 +282,7 @@ func TestOpenBumpPR(t *testing.T) {
 			number, err := c.OpenBumpPR(context.Background(), runner.BumpPRInput{
 				BaseBranch:    "main",
 				BranchName:    "mise-bump/go-1.27.0",
+				BranchPrefix:  tt.branchPrefix,
 				FilePath:      "mise.toml",
 				FileContent:   []byte("[tools]\ngo = \"1.27.0\"\n"),
 				FileSHA:       "blobsha123",
@@ -225,7 +291,14 @@ func TestOpenBumpPR(t *testing.T) {
 				PRBody:        "Bumps go.",
 				Labels:        tt.labels,
 			})
-			if err != nil {
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("error = %v, want errors.Is(_, %v)", err, tt.wantErr)
+				}
+				if tt.wantErrSubstr != "" && !strings.Contains(err.Error(), tt.wantErrSubstr) {
+					t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantErrSubstr)
+				}
+			} else if err != nil {
 				t.Fatalf("OpenBumpPR returned error: %v", err)
 			}
 			if number != tt.wantNumber {

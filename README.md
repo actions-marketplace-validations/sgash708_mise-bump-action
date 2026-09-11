@@ -62,6 +62,11 @@ See [examples/](examples/README.md) for details on each pattern.
 | `base-branch` | Base branch for pull requests | the ref that triggered the run (`GITHUB_REF_NAME`) |
 | `dry-run` | If `true`, print the intended pull request title/body/diff to the job summary without creating any branch or pull request | `false` |
 
+## Pull request lifecycle
+
+- Closing a pull request without merging it means "don't reopen this exact version" — the next run won't recreate it. A newer version is still proposed normally.
+- With `pr-strategy: per-tool`, opening a new pull request for a tool automatically closes any older still-open pull request for that same tool, with a comment pointing at the new one.
+
 ## Tech stack
 
 - Go

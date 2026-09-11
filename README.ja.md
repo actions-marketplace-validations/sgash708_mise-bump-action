@@ -66,6 +66,11 @@ jobs:
 | `base-branch` | PRのベースブランチ | 実行をトリガーしたref(`GITHUB_REF_NAME`) |
 | `dry-run` | `true`にするとブランチ/PRを作成せず、意図したPRのタイトル・本文・diffをjob summaryに出力する | `false` |
 
+## PRのライフサイクル
+
+- PRをmergeせずにcloseした場合、そのバージョンは再提案されない(次回実行で再生成されない)。新しいバージョンが出れば通常通り提案される。
+- `pr-strategy: per-tool`の場合、同じツールの新しいPRを開くと、そのツールの古いopen PRを自動的にcloseし、新しいPRへのリンクをコメントする。
+
 ## 技術スタック
 
 - Go

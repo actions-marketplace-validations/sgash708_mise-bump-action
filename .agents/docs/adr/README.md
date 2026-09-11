@@ -17,6 +17,7 @@ mise-bump-action における**確定済みの判断**を1ファイル1決定で
 | [0007](0007-sanitize-upstream-release-body.md) | アップストリームrelease本文の@メンション/#issue参照をサニタイズしてから埋め込む | セキュリティ/UX |
 | [0008](0008-single-retry-on-rate-limit.md) | GitHub API呼び出しは403/429を`Retry-After`に従って一度だけリトライする | 信頼性 |
 | [0009](0009-line-based-mise-toml-rewrite.md) | `mise.toml`の書き換えはTOMLライブラリでの完全パースではなく正規表現ベースの行単位置換にする | アーキテクチャ |
+| [0010](0010-pr-lifecycle-respects-closed-prs-and-closes-superseded.md) | closeされたPRは再生成せず、古いバージョンのPRはsupersededとして自動closeする | UX/信頼性 |
 
 ## 書き方
 
