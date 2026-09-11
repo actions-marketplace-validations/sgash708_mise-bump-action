@@ -38,18 +38,18 @@ func TestRun(t *testing.T) {
 					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 						return []byte(baseContent), "blobsha", nil
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 						openedTitles = append(openedTitles, in.PRTitle)
 						for _, want := range []string{
 							"chore(deps): bump go from 1.26.1 to 1.27.0",
 							"chore(deps): bump node from 24.12.0 to 24.13.0",
 						} {
 							if in.PRTitle == want {
-								return len(openedTitles), nil
+								return len(openedTitles), true, nil
 							}
 						}
 						t.Errorf("unexpected PR title: %q", in.PRTitle)
-						return len(openedTitles), nil
+						return len(openedTitles), true, nil
 					},
 				}
 			},
@@ -64,12 +64,12 @@ func TestRun(t *testing.T) {
 					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 						return []byte(baseContent), "blobsha", nil
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 						content := string(in.FileContent)
 						if !strings.Contains(content, "1.27.0") || !strings.Contains(content, "24.13.0") {
 							t.Errorf("expected bundled file content to contain both bumped versions, got %q", content)
 						}
-						return 1, nil
+						return 1, true, nil
 					},
 				}
 			},
@@ -99,7 +99,7 @@ func TestRun(t *testing.T) {
 						}
 						return "<details>commits</details>", true
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 						if strings.Contains(in.PRTitle, "golangci-lint") {
 							if !strings.Contains(in.PRBody, "<details>release notes</details>") || !strings.Contains(in.PRBody, "<details>commits</details>") {
 								t.Errorf("expected golangci-lint PR body to contain enrichment, got %q", in.PRBody)
@@ -112,7 +112,7 @@ func TestRun(t *testing.T) {
 								t.Errorf("expected the \"go\" PR body to have no enrichment (not resolvable to a repo), got %q", in.PRBody)
 							}
 						}
-						return 1, nil
+						return 1, true, nil
 					},
 				}
 			},
@@ -141,11 +141,11 @@ func TestRun(t *testing.T) {
 						t.Errorf("CommitsHTML should not be called for a grouped (>1 entry) bump, got repo %q", repo)
 						return "", false
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 						if !strings.Contains(in.PRBody, "[golangci-lint](https://github.com/golangci/golangci-lint)") {
 							t.Errorf("expected grouped PR body to still contain a repo link, got %q", in.PRBody)
 						}
-						return 1, nil
+						return 1, true, nil
 					},
 				}
 			},
@@ -165,12 +165,12 @@ func TestRun(t *testing.T) {
 					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 						return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\nterraform = \"1.7.5\"\n"), "blobsha", nil
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 						calls++
 						if calls == 2 {
-							return 0, errors.New("boom")
+							return 0, false, errors.New("boom")
 						}
-						return calls, nil
+						return calls, true, nil
 					},
 				}
 			},
@@ -187,11 +187,12 @@ func TestRun(t *testing.T) {
 					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 						return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
-						if in.BranchPrefix != "mise-bump/go_" {
-							t.Errorf("BranchPrefix = %q, want %q", in.BranchPrefix, "mise-bump/go_")
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
+						want := branchPrefix([]outdated.Entry{{Name: "go"}})
+						if in.BranchPrefix != want {
+							t.Errorf("BranchPrefix = %q, want %q", in.BranchPrefix, want)
 						}
-						return 1, nil
+						return 1, true, nil
 					},
 				}
 			},
@@ -206,11 +207,11 @@ func TestRun(t *testing.T) {
 					ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 						return []byte(baseContent), "blobsha", nil
 					},
-					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 						if in.BranchPrefix != "" {
 							t.Errorf("BranchPrefix = %q, want empty for a grouped bump", in.BranchPrefix)
 						}
-						return 1, nil
+						return 1, true, nil
 					},
 				}
 			},
@@ -250,11 +251,11 @@ func TestRun_SkipsClosedPreviouslyWithoutFailing(t *testing.T) {
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\n"), "blobsha", nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			if strings.Contains(in.PRTitle, "go") {
-				return 0, ErrClosedPreviously
+				return 0, false, ErrClosedPreviously
 			}
-			return 5, nil
+			return 5, true, nil
 		},
 	}
 	var out bytes.Buffer
@@ -271,6 +272,66 @@ func TestRun_SkipsClosedPreviouslyWithoutFailing(t *testing.T) {
 	}
 }
 
+// TestRun_DoesNotCountAnAlreadyOpenPRAsNewlyOpened guards opened-count/
+// pr-numbers' meaning: rediscovering a PR that was already open from a prior
+// run must not be reported as if a new PR were opened this run, or a
+// workflow polling those outputs would fire the same notification every
+// time it reruns against an unmerged bump.
+func TestRun_DoesNotCountAnAlreadyOpenPRAsNewlyOpened(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+	}
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
+			return 42, false, nil // already open; nothing newly created
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main"}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(numbers) != 0 {
+		t.Errorf("expected an already-open PR not to be reported as newly opened, got %+v", numbers)
+	}
+}
+
+// TestRun_PassesLegacyBranchNamesForASingleEntryGroup guards against a
+// branch-naming scheme change (as happened between v1.4.0, v1.5.0, and this
+// version) silently forgetting PRs opened under a previous scheme: it must
+// still recognize them as idempotency candidates (ADR 0017).
+func TestRun_PassesLegacyBranchNamesForASingleEntryGroup(t *testing.T) {
+	entries := []outdated.Entry{{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"}}
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
+			want := legacyBranchNames([]outdated.Entry{{Name: "go", Latest: "1.27.0"}})
+			if len(in.LegacyBranchNames) != len(want) {
+				t.Fatalf("LegacyBranchNames = %+v, want %+v", in.LegacyBranchNames, want)
+			}
+			for i := range want {
+				if in.LegacyBranchNames[i] != want[i] {
+					t.Errorf("LegacyBranchNames[%d] = %q, want %q", i, in.LegacyBranchNames[i], want[i])
+				}
+			}
+			return 1, true, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main"}
+	if _, err := Run(context.Background(), cfg, entries, gh, &out); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+}
+
 func TestRun_FiltersIgnoredEntries(t *testing.T) {
 	entries := []outdated.Entry{
 		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
@@ -282,9 +343,9 @@ func TestRun_FiltersIgnoredEntries(t *testing.T) {
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\ngo = \"1.26.1\"\nterraform = \"1.7.5\"\n\"aqua:foo/bar\" = \"1.0.0\"\n"), "blobsha", nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			openedNames = append(openedNames, in.PRTitle)
-			return 1, nil
+			return 1, true, nil
 		},
 	}
 	var out bytes.Buffer
@@ -322,9 +383,9 @@ func TestRun_StopsOpeningPRsAtMaxOpenPRs(t *testing.T) {
 		HasOpenPRWithPrefixFunc: func(ctx context.Context, base, prefix string) (bool, error) {
 			return false, nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			t.Fatal("OpenBumpPR must not be called once max-open-prs is already reached")
-			return 0, nil
+			return 0, false, nil
 		},
 	}
 	var out bytes.Buffer
@@ -359,9 +420,9 @@ func TestRun_MaxOpenPRsStopsPartway(t *testing.T) {
 		HasOpenPRWithPrefixFunc: func(ctx context.Context, base, prefix string) (bool, error) {
 			return false, nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			opened++
-			return opened, nil
+			return opened, true, nil
 		},
 	}
 	var out bytes.Buffer
@@ -396,11 +457,11 @@ func TestRun_ReplacingAStaleBumpBypassesAnAlreadySaturatedCap(t *testing.T) {
 			return 1, nil
 		},
 		HasOpenPRWithPrefixFunc: func(ctx context.Context, base, prefix string) (bool, error) {
-			return prefix == "mise-bump/go_", nil
+			return prefix == branchPrefix([]outdated.Entry{{Name: "go"}}), nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			openedBranches = append(openedBranches, in.BranchName)
-			return 1, nil
+			return 1, true, nil
 		},
 	}
 	var out bytes.Buffer
@@ -410,7 +471,8 @@ func TestRun_ReplacingAStaleBumpBypassesAnAlreadySaturatedCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if len(numbers) != 1 || len(openedBranches) != 1 || openedBranches[0] != "mise-bump/go_1.27.0" {
+	wantBranch := branchName([]outdated.Entry{{Name: "go", Latest: "1.27.0"}})
+	if len(numbers) != 1 || len(openedBranches) != 1 || openedBranches[0] != wantBranch {
 		t.Errorf("expected only go's replacement bump to open despite an already-saturated cap, got numbers=%+v branches=%+v", numbers, openedBranches)
 	}
 	if !strings.Contains(out.String(), "max-open-prs") {
@@ -428,9 +490,9 @@ func TestRun_SkipsEntryWithUnsupportedValueFormButBumpsTheRest(t *testing.T) {
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\ngo = \"1.26.1\"\npython = { version = \"3.11\" }\n"), "blobsha", nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			prBody = in.PRBody
-			return 1, nil
+			return 1, true, nil
 		},
 	}
 	var out bytes.Buffer
@@ -459,9 +521,9 @@ func TestRun_SkipsWholeGroupWhenEveryEntryHasAnUnsupportedValueForm(t *testing.T
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\npython = { version = \"3.11\" }\n"), "blobsha", nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			t.Fatal("OpenBumpPR must not be called when every entry in the group is unsupported")
-			return 0, nil
+			return 0, false, nil
 		},
 	}
 	var out bytes.Buffer
@@ -485,9 +547,9 @@ func TestRun_DryRun(t *testing.T) {
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
 		},
-		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 			t.Fatal("OpenBumpPR must not be called in dry-run mode")
-			return 0, nil
+			return 0, false, nil
 		},
 	}
 	var out bytes.Buffer
@@ -502,7 +564,7 @@ func TestRun_DryRun(t *testing.T) {
 
 	preview := out.String()
 	for _, want := range []string{
-		"mise-bump/go_1.27.0",
+		branchName([]outdated.Entry{{Name: "go", Latest: "1.27.0"}}),
 		"chore(deps): bump go from 1.26.1 to 1.27.0",
 		`-go = "1.26.1"`,
 		`+go = "1.27.0"`,
@@ -552,32 +614,52 @@ func TestLineDiff(t *testing.T) {
 
 func TestBranchName(t *testing.T) {
 	tests := []struct {
-		name    string
-		entries []outdated.Entry
-		want    string
+		name        string
+		entries     []outdated.Entry
+		wantContain string
 	}{
 		{
-			name:    "single entry uses the full tool name, not just the last path segment",
-			entries: []outdated.Entry{{Name: "aqua:golangci/golangci-lint", Latest: "2.13.2"}},
-			want:    "mise-bump/aqua-golangci-golangci-lint_2.13.2",
+			name:        "single entry uses the full tool name, not just the last path segment",
+			entries:     []outdated.Entry{{Name: "aqua:golangci/golangci-lint", Latest: "2.13.2"}},
+			wantContain: "aqua-golangci-golangci-lint",
 		},
 		{
 			// Two different backends can share a trailing path segment (both
 			// end in "/cli"); using only the last segment would collide both
 			// into "mise-bump/cli-...". The full sanitized name must not.
-			name:    "different backends with the same trailing segment do not collide",
-			entries: []outdated.Entry{{Name: "go:github.com/bar/cli", Latest: "1.0.0"}},
-			want:    "mise-bump/go-github.com-bar-cli_1.0.0",
+			name:        "different backends with the same trailing segment do not collide",
+			entries:     []outdated.Entry{{Name: "go:github.com/bar/cli", Latest: "1.0.0"}},
+			wantContain: "go-github.com-bar-cli",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := branchName(tt.entries)
-			if got != tt.want {
-				t.Errorf("branchName(%+v) = %q, want %q", tt.entries, got, tt.want)
+			if !strings.Contains(got, tt.wantContain) {
+				t.Errorf("branchName(%+v) = %q, want it to contain %q", tt.entries, got, tt.wantContain)
+			}
+			wantSuffix := "_" + sanitize(tt.entries[0].Latest)
+			if !strings.HasSuffix(got, wantSuffix) {
+				t.Errorf("branchName(%+v) = %q, want it to end with %q", tt.entries, got, wantSuffix)
 			}
 		})
+	}
+}
+
+// TestBranchNameDoesNotCollideWhenSanitizeIsLossy guards against sanitize's
+// lossiness itself causing a collision: ':', '/', and literal '-' all map to
+// '-', so two different tool names can sanitize to an identical string.
+func TestBranchNameDoesNotCollideWhenSanitizeIsLossy(t *testing.T) {
+	a := "go:github.com/foo/bar"
+	b := "go:github.com/foo-bar"
+	if sanitize(a) != sanitize(b) {
+		t.Fatalf("test premise violated: sanitize(%q)=%q and sanitize(%q)=%q are no longer equal", a, sanitize(a), b, sanitize(b))
+	}
+	nameA := branchName([]outdated.Entry{{Name: a, Latest: "1.0.0"}})
+	nameB := branchName([]outdated.Entry{{Name: b, Latest: "1.0.0"}})
+	if nameA == nameB {
+		t.Errorf("branch names for different tool names collided: both are %q", nameA)
 	}
 }
 

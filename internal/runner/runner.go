@@ -33,11 +33,18 @@ type BumpPRInput struct {
 	PRBody        string
 	Labels        []string
 	// BranchPrefix, when non-empty, identifies this bump's tool independent
-	// of version (e.g. "mise-bump/go_"). Implementations use it to find and
-	// close other open PRs for the same tool at an older version (a newer
-	// bump supersedes them). Empty for grouped bumps, where no single
+	// of version (e.g. "mise-bump/go-a1b2c3d4_"). Implementations use it to
+	// find and close other open PRs for the same tool at an older version (a
+	// newer bump supersedes them). Empty for grouped bumps, where no single
 	// branch-name prefix identifies "this tool".
 	BranchPrefix string
+	// LegacyBranchNames lists branch names this exact bump (same tool, same
+	// target version) would have used under naming schemes this action has
+	// since replaced (see legacyBranchNames). Implementations must treat an
+	// open or previously-closed PR under any of these exactly as they would
+	// under BranchName, so renaming the scheme doesn't forget PRs opened
+	// under the old one (ADR 0017).
+	LegacyBranchNames []string
 }
 
 // ErrClosedPreviously is returned by GitHub.OpenBumpPR when a pull request
@@ -60,7 +67,12 @@ const BranchNamespace = "mise-bump/"
 //go:generate moq -out mocks.go . GitHub
 type GitHub interface {
 	ReadFile(ctx context.Context, path, ref string) (content []byte, sha string, err error)
-	OpenBumpPR(ctx context.Context, in BumpPRInput) (prNumber int, err error)
+	// OpenBumpPR reports created=false (with no error) when a pull request
+	// for in.BranchName (or one of in.LegacyBranchNames) was already open and
+	// nothing new was written — callers must not count that toward
+	// opened-count/pr-numbers, since nothing was newly opened this run
+	// (ADR 0017).
+	OpenBumpPR(ctx context.Context, in BumpPRInput) (prNumber int, created bool, err error)
 	// CountOpenBumpPRs reports how many open pull requests into base were
 	// opened by this action (branch name starting with BranchNamespace), for
 	// enforcing config.Config.MaxOpenPRs.
@@ -192,8 +204,10 @@ func matchesAny(name string, patterns []string) (pattern string, matched bool) {
 // bumpGroup reads the group's shared mise.toml, applies every entry's bump,
 // renders PR text (with best-effort enrichment), and either opens the pull
 // request or, in dry-run mode, writes a preview of it to out. skipped is
-// true when GitHub reports the exact bump was previously closed without
-// merging (ErrClosedPreviously) — not a failure, just nothing to do.
+// true when there is nothing new to report this run: GitHub reports the
+// exact bump was previously closed without merging (ErrClosedPreviously), a
+// pull request for it was already open (OpenBumpPR's created=false), or
+// every entry in the group had an unsupported value form.
 func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, multiConfig bool, gh GitHub, out io.Writer) (number int, skipped bool, err error) {
 	path := group.Entries[0].RelPath
 
@@ -230,17 +244,18 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 		return 0, false, nil
 	}
 
-	number, err = gh.OpenBumpPR(ctx, BumpPRInput{
-		BaseBranch:    cfg.BaseBranch,
-		BranchName:    branch,
-		BranchPrefix:  branchPrefix(bumped),
-		FilePath:      path,
-		FileContent:   after,
-		FileSHA:       sha,
-		CommitMessage: text.Commit,
-		PRTitle:       text.Title,
-		PRBody:        text.Body,
-		Labels:        cfg.Labels,
+	number, created, err := gh.OpenBumpPR(ctx, BumpPRInput{
+		BaseBranch:        cfg.BaseBranch,
+		BranchName:        branch,
+		BranchPrefix:      branchPrefix(bumped),
+		LegacyBranchNames: legacyBranchNames(bumped),
+		FilePath:          path,
+		FileContent:       after,
+		FileSHA:           sha,
+		CommitMessage:     text.Commit,
+		PRTitle:           text.Title,
+		PRBody:            text.Body,
+		Labels:            cfg.Labels,
 	})
 	if errors.Is(err, ErrClosedPreviously) {
 		_, _ = fmt.Fprintf(out, "## [skipped] %s\n\nA pull request for **%s** was previously closed without merging; not reopening it.\n\n", path, text.Title)
@@ -248,6 +263,10 @@ func bumpGroup(ctx context.Context, cfg config.Config, group grouping.PRGroup, m
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("failed to open pull request for branch %s: %w", branch, err)
+	}
+	if !created {
+		_, _ = fmt.Fprintf(out, "## [skipped] %s\n\nA pull request for **%s** is already open (#%d); nothing new to report.\n\n", path, text.Title, number)
+		return 0, true, nil
 	}
 	return number, false, nil
 }
@@ -315,13 +334,10 @@ func branchName(entries []outdated.Entry) string {
 		// The full tool name (not just its trailing path segment) is used so
 		// that different backends sharing a segment — e.g. "aqua:foo/cli" and
 		// "go:github.com/bar/cli" both end in "/cli" — don't collide into the
-		// same branch name. The "_" separator (never produced by sanitize,
-		// which only ever emits [A-Za-z0-9.-]) guarantees branchPrefix's
-		// HasPrefix match can't cross a tool-name boundary either — e.g.
-		// "go" and "go:github.com/matryer/moq" both sanitize to strings
-		// starting with "go", so a plain "-" separator would let "go"'s
-		// prefix match "go-github.com-matryer-moq-..." too.
-		return fmt.Sprintf("%s%s_%s", BranchNamespace, sanitize(e.Name), sanitize(e.Latest))
+		// same branch name. nameFingerprint (see there) is what actually
+		// guarantees no collision, since sanitize() alone is a lossy
+		// many-to-one mapping.
+		return fmt.Sprintf("%s%s-%s_%s", BranchNamespace, sanitize(e.Name), nameFingerprint(e.Name), sanitize(e.Latest))
 	}
 
 	h := fnv.New32a()
@@ -334,13 +350,48 @@ func branchName(entries []outdated.Entry) string {
 }
 
 // branchPrefix returns the version-independent prefix of branchName's
-// single-entry form (e.g. "mise-bump/go_"), or "" for a grouped bump, where
-// no single prefix identifies "this tool" across versions.
+// single-entry form (e.g. "mise-bump/go-a1b2c3d4_"), or "" for a grouped
+// bump, where no single prefix identifies "this tool" across versions.
 func branchPrefix(entries []outdated.Entry) string {
 	if len(entries) != 1 {
 		return ""
 	}
-	return fmt.Sprintf("%s%s_", BranchNamespace, sanitize(entries[0].Name))
+	return fmt.Sprintf("%s%s-%s_", BranchNamespace, sanitize(entries[0].Name), nameFingerprint(entries[0].Name))
+}
+
+// legacyBranchNames returns the branch name this exact bump (same tool, same
+// target version) would have used under naming schemes this action has
+// since replaced, so a pull request opened or closed under an old scheme is
+// still recognized after the scheme changes (ADR 0017) — without this,
+// renaming the scheme would silently forget every PR opened under the old
+// one, both resurrecting bumps ADR 0010 already closed and duplicating PRs
+// that are still open. Empty for grouped bumps: their hash-based name has
+// never changed.
+func legacyBranchNames(entries []outdated.Entry) []string {
+	if len(entries) != 1 {
+		return nil
+	}
+	e := entries[0]
+	return []string{
+		// v1.0.0-v1.4.0
+		fmt.Sprintf("%s%s-%s", BranchNamespace, sanitize(e.Name), sanitize(e.Latest)),
+		// v1.5.0
+		fmt.Sprintf("%s%s_%s", BranchNamespace, sanitize(e.Name), sanitize(e.Latest)),
+	}
+}
+
+// nameFingerprint returns an 8-hex-character fingerprint of name, mixed into
+// branchName/branchPrefix so they stay collision-free even though sanitize
+// is a lossy many-to-one mapping — e.g. "go:github.com/foo/bar" and
+// "go:github.com/foo-bar" both sanitize to "go-github.com-foo-bar". Two
+// different tool names getting the same fingerprint is astronomically
+// unlikely for the number of tools any single mise.toml realistically has
+// (same trust model as branchName's batch hash above).
+func nameFingerprint(name string) string {
+	h := fnv.New32a()
+	// hash.Hash.Write never returns an error; see the identical note above.
+	_, _ = io.WriteString(h, name)
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 func sanitize(s string) string {

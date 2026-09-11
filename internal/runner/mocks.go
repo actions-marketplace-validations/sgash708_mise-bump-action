@@ -27,7 +27,7 @@ var _ GitHub = &GitHubMock{}
 //			HasOpenPRWithPrefixFunc: func(ctx context.Context, base string, prefix string) (bool, error) {
 //				panic("mock out the HasOpenPRWithPrefix method")
 //			},
-//			OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+//			OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, bool, error) {
 //				panic("mock out the OpenBumpPR method")
 //			},
 //			ReadFileFunc: func(ctx context.Context, path string, ref string) ([]byte, string, error) {
@@ -53,7 +53,7 @@ type GitHubMock struct {
 	HasOpenPRWithPrefixFunc func(ctx context.Context, base string, prefix string) (bool, error)
 
 	// OpenBumpPRFunc mocks the OpenBumpPR method.
-	OpenBumpPRFunc func(ctx context.Context, in BumpPRInput) (int, error)
+	OpenBumpPRFunc func(ctx context.Context, in BumpPRInput) (int, bool, error)
 
 	// ReadFileFunc mocks the ReadFile method.
 	ReadFileFunc func(ctx context.Context, path string, ref string) ([]byte, string, error)
@@ -247,7 +247,7 @@ func (mock *GitHubMock) HasOpenPRWithPrefixCalls() []struct {
 }
 
 // OpenBumpPR calls OpenBumpPRFunc.
-func (mock *GitHubMock) OpenBumpPR(ctx context.Context, in BumpPRInput) (int, error) {
+func (mock *GitHubMock) OpenBumpPR(ctx context.Context, in BumpPRInput) (int, bool, error) {
 	if mock.OpenBumpPRFunc == nil {
 		panic("GitHubMock.OpenBumpPRFunc: method is nil but GitHub.OpenBumpPR was just called")
 	}

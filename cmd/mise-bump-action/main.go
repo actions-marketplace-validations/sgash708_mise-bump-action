@@ -81,6 +81,10 @@ func run(ctx context.Context, cfg config.Config, stderr, summary, output io.Writ
 	for _, path := range cfg.MiseConfigPaths {
 		entries, err := lookup(ctx, ".", path)
 		if err != nil {
+			// ADR 0015 requires opened-count/pr-numbers to always be set, so
+			// a consumer workflow step reading them (e.g. under
+			// `if: always()`) never sees an unset/empty value in place of "0".
+			writeOutputs(output, nil)
 			return fmt.Errorf("failed to check outdated tools for %s: %w", path, err)
 		}
 		allEntries = append(allEntries, entries...)

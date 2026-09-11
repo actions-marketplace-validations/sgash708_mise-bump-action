@@ -107,6 +107,20 @@ See [examples/](examples/README.md) for details on each pattern.
 - Closing a pull request without merging it means "don't reopen this exact version" — the next run won't recreate it. A newer version is still proposed normally.
 - With `pr-strategy: per-tool`, opening a new pull request for a tool automatically closes any older still-open pull request for that same tool, with a comment pointing at the new one.
 
+## Upgrading
+
+Versions through v1.4.0 used `mise-bump/<tool>-<version>` as the branch-name
+format; v1.5.0 briefly changed it to `mise-bump/<tool>_<version>`; this
+version fixes both to be collision-free going forward (ADR 0017). Opening or
+closing a pull request under the current format still recognizes a pull
+request opened under either older format (so upgrading won't reopen a bump
+you already closed, or duplicate one that's still open) — but a stale pull
+request opened before this version won't be auto-closed as superseded when
+a newer bump for the same tool opens, since the two formats can't be told
+apart safely by prefix alone. If you have open bump pull requests from
+before v1.6.0, close them once after upgrading; every pull request opened
+from now on uses the current format consistently.
+
 ## Limitations
 
 Trade-offs from favoring a light setup over Renovate/Dependabot's full feature set:

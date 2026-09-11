@@ -172,55 +172,62 @@ func (c *Client) ReadFile(ctx context.Context, path, ref string) ([]byte, string
 
 // OpenBumpPR is idempotent with respect to in.BranchName (see
 // troubleshooting.md, "422 Reference already exists"): an existing open PR
-// short-circuits with no writes, a previously-closed-without-merging PR
-// returns runner.ErrClosedPreviously with no writes, a stale branch is
-// deleted and recreated, and otherwise it creates the branch, commits,
-// opens the PR, and applies in.Labels. When in.BranchPrefix is set, any
-// other open PR sharing that prefix (an older version of the same tool) is
-// closed with a comment pointing at the new PR.
-func (c *Client) OpenBumpPR(ctx context.Context, in runner.BumpPRInput) (int, error) {
-	if number, exists, err := c.findOpenPR(ctx, in.BaseBranch, in.BranchName); err != nil {
-		return 0, err
-	} else if exists {
-		return number, nil
+// under in.BranchName or any of in.LegacyBranchNames short-circuits with no
+// writes (created=false), a previously-closed-without-merging PR under any
+// of those names returns runner.ErrClosedPreviously with no writes, a stale
+// branch is deleted and recreated, and otherwise it creates the branch,
+// commits, opens the PR, and applies in.Labels (created=true). When
+// in.BranchPrefix is set, any other open PR sharing that prefix (an older
+// version of the same tool) is closed with a comment pointing at the new PR.
+func (c *Client) OpenBumpPR(ctx context.Context, in runner.BumpPRInput) (int, bool, error) {
+	candidates := append([]string{in.BranchName}, in.LegacyBranchNames...)
+
+	for _, branch := range candidates {
+		if number, exists, err := c.findOpenPR(ctx, in.BaseBranch, branch); err != nil {
+			return 0, false, err
+		} else if exists {
+			return number, false, nil
+		}
 	}
 
-	if closed, err := c.findClosedUnmergedPR(ctx, in.BaseBranch, in.BranchName); err != nil {
-		return 0, err
-	} else if closed {
-		return 0, runner.ErrClosedPreviously
+	for _, branch := range candidates {
+		if closed, err := c.findClosedUnmergedPR(ctx, in.BaseBranch, branch); err != nil {
+			return 0, false, err
+		} else if closed {
+			return 0, false, runner.ErrClosedPreviously
+		}
 	}
 
 	baseSHA, err := c.getRefSHA(ctx, in.BaseBranch)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
 	if _, exists, err := c.branchSHA(ctx, in.BranchName); err != nil {
-		return 0, err
+		return 0, false, err
 	} else if exists {
 		if err := c.deleteRef(ctx, in.BranchName); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 	}
 
 	if err := c.createRef(ctx, in.BranchName, baseSHA); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if err := c.putFile(ctx, in.FilePath, in.CommitMessage, in.FileContent, in.FileSHA, in.BranchName); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	number, err := c.createPullRequest(ctx, in.PRTitle, in.PRBody, in.BranchName, in.BaseBranch)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if err := c.addLabels(ctx, number, in.Labels); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if in.BranchPrefix != "" {
 		c.closeSupersededPRs(ctx, in.BaseBranch, in.BranchPrefix, in.BranchName, number)
 	}
-	return number, nil
+	return number, true, nil
 }
 
 // findOpenPR looks for an already-open pull request from branch into base.
@@ -320,16 +327,31 @@ type openPRRef struct {
 	} `json:"head"`
 }
 
+// maxOpenPRPages bounds listOpenPRRefs's pagination loop (100 PRs/page, so
+// 1000 pages is 100,000 open PRs — far beyond any real repository). It exists
+// only so a malfunctioning API/mock can't spin the loop forever.
+const maxOpenPRPages = 1000
+
 // listOpenPRRefs lists every open pull request into base along with its
 // head branch name, shared by CountOpenBumpPRs, HasOpenPRWithPrefix, and
-// closeSupersededPRs.
+// closeSupersededPRs. Paginates through every page GitHub returns (a repo
+// with more than 100 open PRs into base would otherwise silently see only
+// the first 100, undercounting max-open-prs and missing superseded PRs to
+// close, ADR 0017).
 func (c *Client) listOpenPRRefs(ctx context.Context, base string) ([]openPRRef, error) {
-	var out []openPRRef
-	path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100", c.repo, url.QueryEscape(base))
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return nil, err
+	var all []openPRRef
+	for page := 1; page <= maxOpenPRPages; page++ {
+		var out []openPRRef
+		path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100&page=%d", c.repo, url.QueryEscape(base), page)
+		if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+			return nil, err
+		}
+		all = append(all, out...)
+		if len(out) < 100 {
+			break
+		}
 	}
-	return out, nil
+	return all, nil
 }
 
 // branchSHA returns the branch's current commit SHA, or exists=false if the

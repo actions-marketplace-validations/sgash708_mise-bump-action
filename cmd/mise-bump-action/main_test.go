@@ -39,9 +39,9 @@ func TestRun(t *testing.T) {
 				return nil, nil
 			},
 			gh: &runner.GitHubMock{
-				OpenBumpPRFunc: func(ctx context.Context, in runner.BumpPRInput) (int, error) {
+				OpenBumpPRFunc: func(ctx context.Context, in runner.BumpPRInput) (int, bool, error) {
 					t.Fatal("OpenBumpPR should not be called when nothing is outdated")
-					return 0, nil
+					return 0, false, nil
 				},
 			},
 			wantStderrSubstr: "no outdated mise-managed tools found",
@@ -57,8 +57,8 @@ func TestRun(t *testing.T) {
 				ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 					return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
 				},
-				OpenBumpPRFunc: func(ctx context.Context, in runner.BumpPRInput) (int, error) {
-					return 7, nil
+				OpenBumpPRFunc: func(ctx context.Context, in runner.BumpPRInput) (int, bool, error) {
+					return 7, true, nil
 				},
 			},
 			wantStderrSubstr: "opened 1 pull request(s)",
@@ -73,6 +73,10 @@ func TestRun(t *testing.T) {
 			gh:            &runner.GitHubMock{},
 			wantErr:       true,
 			wantErrSubstr: "mise not trusted",
+			// ADR 0015: outputs must be set even on this early failure path,
+			// so a consumer step reading them under `if: always()` sees "0"
+			// rather than an unset/empty value.
+			wantOutput: "opened-count=0\npr-numbers=\n",
 		},
 		{
 			name: "dry-run does not open PRs and reports via stderr",
@@ -91,9 +95,9 @@ func TestRun(t *testing.T) {
 				ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 					return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
 				},
-				OpenBumpPRFunc: func(ctx context.Context, in runner.BumpPRInput) (int, error) {
+				OpenBumpPRFunc: func(ctx context.Context, in runner.BumpPRInput) (int, bool, error) {
 					t.Fatal("OpenBumpPR should not be called in dry-run mode")
-					return 0, nil
+					return 0, false, nil
 				},
 			},
 			wantStderrSubstr: "[dry-run] no pull requests were created",
@@ -113,12 +117,10 @@ func TestRun(t *testing.T) {
 				if tt.wantErrSubstr != "" && !strings.Contains(err.Error(), tt.wantErrSubstr) {
 					t.Errorf("expected error to contain %q, got: %v", tt.wantErrSubstr, err)
 				}
-				return
-			}
-			if err != nil {
+			} else if err != nil {
 				t.Fatalf("run returned error: %v", err)
 			}
-			if tt.wantStderrSubstr != "" && !strings.Contains(stderr.String(), tt.wantStderrSubstr) {
+			if !tt.wantErr && tt.wantStderrSubstr != "" && !strings.Contains(stderr.String(), tt.wantStderrSubstr) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantStderrSubstr)
 			}
 			if tt.wantOutput != "" && output.String() != tt.wantOutput {
