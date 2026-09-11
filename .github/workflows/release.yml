@@ -57,7 +57,13 @@ jobs:
               label="${entry#*:}"
               # "!" marks a breaking change (e.g. "feat!:" or "fix(scope)!:"),
               # which must still classify under its base type.
-              commits=$(git log "$range" --no-merges --pretty=format:"- %s (%h)" --grep "^${prefix}(\(.*\))?!?:" -E)
+              # Wrap any "@name" in commit subjects in backticks so GitHub
+              # renders it as inline code instead of autolinking/notifying a
+              # real account and crediting it as a release "Contributor" —
+              # bit us for real with a commit subject that literally said
+              # "@v0" (the floating major tag), which GitHub resolved to an
+              # unrelated existing user named "v0".
+              commits=$(git log "$range" --no-merges --pretty=format:"- %s (%h)" --grep "^${prefix}(\(.*\))?!?:" -E | sed -E 's/@([A-Za-z0-9](-?[A-Za-z0-9])*)/`@\1`/g')
               if [ -n "$commits" ]; then
                 printf '\n### %s\n%s\n' "$label" "$commits"
               fi
