@@ -48,7 +48,7 @@ runs:
             ;;
         esac
 
-        gh release download v1.3.0 \
+        gh release download v1.4.0 \
           --repo sgash708/mise-bump-action \
           --pattern "mise-bump-action_linux_${arch}" \
           --pattern 'checksums.txt' \
