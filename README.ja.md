@@ -74,7 +74,7 @@ jobs:
 ## 技術スタック
 
 - Go
-- 配布形態: composite action(v0はlinux/amd64向け事前ビルドバイナリをGitHub Releaseで配布)
+- 配布形態: composite action(linux/amd64・linux/arm64向け事前ビルドバイナリをGitHub Releaseで配布。macOS/Windowsランナーは非対応)
 - 認証: 利用側リポジトリの既定`GITHUB_TOKEN`のみ(追加のPAT不要)
 
 ## ディレクトリ構成

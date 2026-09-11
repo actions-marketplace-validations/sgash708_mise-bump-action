@@ -70,7 +70,7 @@ See [examples/](examples/README.md) for details on each pattern.
 ## Tech stack
 
 - Go
-- Distribution: composite action (v0 ships a pre-built linux/amd64 binary via GitHub Releases)
+- Distribution: composite action (pre-built linux/amd64 and linux/arm64 binaries via GitHub Releases; macOS/Windows runners are not supported)
 - Auth: the calling repository's default `GITHUB_TOKEN` only (no extra PAT required)
 
 ## Directory structure

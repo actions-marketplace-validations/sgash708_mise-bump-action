@@ -93,7 +93,8 @@ PRグループ(pr-strategyが`per-tool`ならツール1件、`single`なら同�
 
 ## v0スコープと配布
 
-- v0はGitHub-hosted ubuntu runner(linux/amd64)のみを対象とする。
+- v0はGitHub-hosted ubuntu runner(linux/amd64・linux/arm64)を対象とする。macOS/Windows
+  ランナーは非対応(ADR 0004追記)。
 - ビルド済みバイナリをタグ付きでGitHub Releaseに添付し、composite actionが実行時にダウンロードする(`go install`ランタイムビルドは採用しない)。
 - 将来GoReleaser等でOS/arch別ビルドに移行する場合も、利用側workflowのインターフェース(`uses: sgash708/mise-bump-action@vX`)は変えない。
 

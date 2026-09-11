@@ -31,21 +31,26 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        if [ "$(uname -m)" != "x86_64" ]; then
-          echo "::error::mise-bump-action v0 only ships a linux/amd64 binary; this runner is $(uname -m)." >&2
-          exit 1
-        fi
+        case "$(uname -m)" in
+          x86_64) arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *)
+            echo "::error::mise-bump-action only ships linux/amd64 and linux/arm64 binaries; this runner is $(uname -m)." >&2
+            exit 1
+            ;;
+        esac
 
         gh release download v1.2.0 \
           --repo sgash708/mise-bump-action \
-          --pattern 'mise-bump-action_linux_amd64' \
+          --pattern "mise-bump-action_linux_${arch}" \
           --pattern 'checksums.txt' \
           --dir "${{ github.action_path }}" \
           --clobber
 
         cd "${{ github.action_path }}"
-        sha256sum -c checksums.txt
-        chmod +x mise-bump-action_linux_amd64
+        sha256sum -c checksums.txt --ignore-missing
+        chmod +x "mise-bump-action_linux_${arch}"
+        mv "mise-bump-action_linux_${arch}" mise-bump-action
 
     - name: Run mise-bump-action
       shell: bash
@@ -56,7 +61,7 @@ runs:
         INPUT_BASE_BRANCH: ${{ inputs.base-branch }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
         GITHUB_TOKEN: ${{ github.token }}
-      run: "${{ github.action_path }}/mise-bump-action_linux_amd64"
+      run: "${{ github.action_path }}/mise-bump-action"
 
 branding:
   icon: "refresh-cw"
