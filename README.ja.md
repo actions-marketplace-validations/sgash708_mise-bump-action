@@ -49,6 +49,13 @@ jobs:
 
 各パターンの詳細は [examples/](examples/README.md) を参照。
 
+> **注意:** GitHubの仕様上、`GITHUB_TOKEN`で作成されたPR(同一リポジトリ内・fork
+> でない場合も含む)に対する最初のworkflow runは、リポジトリの管理者が手動で承認
+> しないと実行されない。このactionが開いたPRのCIチェックにも当てはまる。PRの
+> checksタブから一度承認する(または`gh api -X POST
+> repos/{owner}/{repo}/actions/runs/{run_id}/approve`)と、以降そのブランチでは
+> 再度聞かれない。
+
 ## Inputs
 
 | input | 説明 | 既定値 |

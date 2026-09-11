@@ -83,6 +83,37 @@ outdatedの結果に混ざる。
 絶対パスと厳密に一致するものだけを採用し、それ以外(親ディレクトリ・グローバル設定由来)を
 除外する。この対応は実装済みで、追加の運用対応は不要。
 
+## release notesのコミット件名がGitHubの@メンションとして解釈される
+
+**症状:** リリースページの「Contributors」欄に、実際にはこのリポジトリと無関係な
+GitHubアカウントが表示される。
+
+**原因:** `release.yml`はコミット件名をそのままrelease notesに埋め込む。件名に
+`@v0`のような文字列が含まれていると、GitHubはそれを実在ユーザーへの@メンションと
+解釈し、たまたま存在するアカウントをContributorとして表示してしまう(実際に
+floating major tagの"v0"という文字列が既存のGitHubユーザー名と衝突して発生した)。
+
+**対処法:** `release.yml`はコミット件名から`@name`パターンを抽出しバッククォートで
+囲むことで、GitHubにインラインコードとして描画させメンション化を防ぐ(実装済み)。
+コミットメッセージを書く際も、`@`から始まる文字列は説明目的であっても
+バッククォートで囲む習慣をつけること。
+
+## release.ymlのsedスクリプトがshellcheck SC2016でreviewdog上fail扱いになる
+
+**症状:** `sed -E 's/@(...)/`@\1`/g'`のようなバックリファレンス(`\1`)を含む
+シングルクォートのsedスクリプトに対し、shellcheckがSC2016(「シングルクォート内は
+展開されない、ダブルクォートを使うべき」)を報告する。ローカルの`actionlint`は
+exit code 0で通るが、reviewdog経由のGitHub Check(`actionlint`という名前)は
+`fail`扱いになりPRがブロックされる。
+
+**原因:** SC2016はshellcheck内部では`:info:`重要度だが、actionlintはshellcheckの
+重要度情報を保持せず一律の問題として報告するため、reviewdogの`fail_level: error`が
+これを拾ってしまう。`\1`はsedのバックリファレンスであり、シェル変数展開の意図では
+ないため実害はない誤検知。
+
+**対処法:** 対象行の直前に`# shellcheck disable=SC2016`コメントを置いて明示的に
+抑制する(実装済み)。
+
 ## `422 Reference already exists`でブランチ作成が失敗する
 
 **症状:** mise-bump-actionのPR作成が`422 Reference already exists`で失敗する。

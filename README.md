@@ -45,6 +45,13 @@ Ready-to-copy workflows for `.github/workflows/mise-bump.yml`:
 
 See [examples/](examples/README.md) for details on each pattern.
 
+> **Note:** GitHub requires a maintainer to manually approve the first workflow
+> run triggered on a pull request opened via `GITHUB_TOKEN` (even for
+> same-repo, non-fork PRs) — this applies to the CI checks on PRs this action
+> opens. Approve once from the PR's checks tab (or `gh api -X POST
+> repos/{owner}/{repo}/actions/runs/{run_id}/approve`) and it won't ask again
+> for that branch.
+
 ## Inputs
 
 | input | description | default |
