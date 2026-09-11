@@ -23,6 +23,7 @@ mise-bump-action における**確定済みの判断**を1ファイル1決定で
 | [0013](0013-per-entry-skip-for-unsupported-value-forms.md) | 未対応の値形式(inline table/array)は個別エントリだけスキップし、グループ全体を失敗させない | 信頼性 |
 | [0014](0014-pr-body-truncation.md) | PR本文はGitHubの65,536文字上限に合わせて切り詰める | 信頼性 |
 | [0015](0015-pr-numbers-opened-count-outputs.md) | `pr-numbers`/`opened-count`をaction outputとして公開する | UX |
+| [0016](0016-fix-branch-collision-deadlock-label-and-ref-bugs.md) | ブランチプレフィックス衝突・max-open-prsデッドロック・ラベル衝突・`/head`誤検知の4件を修正する | 信頼性 |
 
 ## 書き方
 

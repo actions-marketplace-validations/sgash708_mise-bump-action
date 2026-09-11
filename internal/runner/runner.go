@@ -33,7 +33,7 @@ type BumpPRInput struct {
 	PRBody        string
 	Labels        []string
 	// BranchPrefix, when non-empty, identifies this bump's tool independent
-	// of version (e.g. "mise-bump/go-"). Implementations use it to find and
+	// of version (e.g. "mise-bump/go_"). Implementations use it to find and
 	// close other open PRs for the same tool at an older version (a newer
 	// bump supersedes them). Empty for grouped bumps, where no single
 	// branch-name prefix identifies "this tool".
@@ -46,6 +46,14 @@ type BumpPRInput struct {
 // PR without merging means "don't reopen this exact version."
 var ErrClosedPreviously = errors.New("a pull request for this bump was previously closed without merging; not reopening it")
 
+// BranchNamespace prefixes every branch this action creates (see branchName),
+// regardless of pr-strategy. githubapi uses it to recognize "our" pull
+// requests when counting against config.Config.MaxOpenPRs (ADR 0016) —
+// counting by config.Config.Labels instead would misattribute PRs from any
+// other tool that happens to default to the same label (e.g. Dependabot's
+// own default "dependencies" label).
+const BranchNamespace = "mise-bump/"
+
 // GitHub is the set of GitHub operations runner.Run needs. internal/githubapi
 // provides the real implementation; tests use a moq-generated mock.
 //
@@ -53,9 +61,18 @@ var ErrClosedPreviously = errors.New("a pull request for this bump was previousl
 type GitHub interface {
 	ReadFile(ctx context.Context, path, ref string) (content []byte, sha string, err error)
 	OpenBumpPR(ctx context.Context, in BumpPRInput) (prNumber int, err error)
-	// CountOpenBumpPRs reports how many open pull requests into base carry
-	// any of labels, for enforcing config.Config.MaxOpenPRs.
-	CountOpenBumpPRs(ctx context.Context, base string, labels []string) (int, error)
+	// CountOpenBumpPRs reports how many open pull requests into base were
+	// opened by this action (branch name starting with BranchNamespace), for
+	// enforcing config.Config.MaxOpenPRs.
+	CountOpenBumpPRs(ctx context.Context, base string) (int, error)
+	// HasOpenPRWithPrefix reports whether an open pull request into base
+	// already exists whose branch starts with prefix (an older version of
+	// the same tool). Run uses this so a bump that will replace a stale PR
+	// (net zero open-PR count) doesn't get blocked by max-open-prs, which
+	// would otherwise deadlock: the stale PR can only be closed by the
+	// replacement bump succeeding, but max-open-prs would never let that
+	// bump through while the stale PR still occupies a slot (ADR 0016).
+	HasOpenPRWithPrefix(ctx context.Context, base, prefix string) (bool, error)
 	// ReleaseNotesHTML and CommitsHTML enrich a bump's PR body with the
 	// target tool's own release notes/commit history, matching Dependabot's
 	// format. Implementations return ok=false when enrichment isn't
@@ -92,7 +109,7 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 
 	openCount := 0
 	if cfg.MaxOpenPRs > 0 && !cfg.DryRun {
-		n, err := gh.CountOpenBumpPRs(ctx, cfg.BaseBranch, cfg.Labels)
+		n, err := gh.CountOpenBumpPRs(ctx, cfg.BaseBranch)
 		if err != nil {
 			_, _ = fmt.Fprintf(out, "warning: failed to count open pull requests for max-open-prs (%v); not enforcing the limit this run\n", err)
 		} else {
@@ -101,7 +118,22 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 	}
 
 	for _, group := range groups {
-		if cfg.MaxOpenPRs > 0 && !cfg.DryRun && openCount >= cfg.MaxOpenPRs {
+		// A bump that will replace an existing open PR for the same tool
+		// (an older version) is net zero against max-open-prs: closing the
+		// stale PR frees the slot the new one takes. It must bypass the gate
+		// below rather than be counted against it, or a saturated cap would
+		// permanently block the only thing that could free a slot.
+		replacesExisting := false
+		if prefix := branchPrefix(group.Entries); prefix != "" && cfg.MaxOpenPRs > 0 && !cfg.DryRun {
+			has, err := gh.HasOpenPRWithPrefix(ctx, cfg.BaseBranch, prefix)
+			if err != nil {
+				_, _ = fmt.Fprintf(out, "warning: failed to check for an existing pull request to replace for %s (%v)\n", prefix, err)
+			} else {
+				replacesExisting = has
+			}
+		}
+
+		if cfg.MaxOpenPRs > 0 && !cfg.DryRun && openCount >= cfg.MaxOpenPRs && !replacesExisting {
 			_, _ = fmt.Fprintf(out, "## [skipped] %s\n\nmax-open-prs (%d) already reached; not opening more pull requests this run.\n\n", group.Entries[0].RelPath, cfg.MaxOpenPRs)
 			continue
 		}
@@ -115,7 +147,9 @@ func Run(ctx context.Context, cfg config.Config, entries []outdated.Entry, gh Gi
 			continue
 		}
 		prNumbers = append(prNumbers, number)
-		openCount++
+		if !replacesExisting {
+			openCount++
+		}
 	}
 
 	if len(errs) > 0 {
@@ -281,8 +315,13 @@ func branchName(entries []outdated.Entry) string {
 		// The full tool name (not just its trailing path segment) is used so
 		// that different backends sharing a segment — e.g. "aqua:foo/cli" and
 		// "go:github.com/bar/cli" both end in "/cli" — don't collide into the
-		// same branch name.
-		return fmt.Sprintf("mise-bump/%s-%s", sanitize(e.Name), sanitize(e.Latest))
+		// same branch name. The "_" separator (never produced by sanitize,
+		// which only ever emits [A-Za-z0-9.-]) guarantees branchPrefix's
+		// HasPrefix match can't cross a tool-name boundary either — e.g.
+		// "go" and "go:github.com/matryer/moq" both sanitize to strings
+		// starting with "go", so a plain "-" separator would let "go"'s
+		// prefix match "go-github.com-matryer-moq-..." too.
+		return fmt.Sprintf("%s%s_%s", BranchNamespace, sanitize(e.Name), sanitize(e.Latest))
 	}
 
 	h := fnv.New32a()
@@ -291,17 +330,17 @@ func branchName(entries []outdated.Entry) string {
 		// silences errcheck explicitly rather than ignoring it implicitly.
 		_, _ = fmt.Fprintf(h, "%s@%s;", e.Name, e.Latest)
 	}
-	return fmt.Sprintf("mise-bump/batch-%x", h.Sum32())
+	return fmt.Sprintf("%sbatch-%x", BranchNamespace, h.Sum32())
 }
 
 // branchPrefix returns the version-independent prefix of branchName's
-// single-entry form (e.g. "mise-bump/go-"), or "" for a grouped bump, where
+// single-entry form (e.g. "mise-bump/go_"), or "" for a grouped bump, where
 // no single prefix identifies "this tool" across versions.
 func branchPrefix(entries []outdated.Entry) string {
 	if len(entries) != 1 {
 		return ""
 	}
-	return fmt.Sprintf("mise-bump/%s-", sanitize(entries[0].Name))
+	return fmt.Sprintf("%s%s_", BranchNamespace, sanitize(entries[0].Name))
 }
 
 func sanitize(s string) string {

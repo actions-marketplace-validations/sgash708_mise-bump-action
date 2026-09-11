@@ -319,24 +319,28 @@ func TestOpenBumpPR(t *testing.T) {
 func TestCountOpenBumpPRs(t *testing.T) {
 	tests := []struct {
 		name      string
-		labels    []string
 		prs       []map[string]any
 		wantCount int
 	}{
 		{
-			name:      "counts all open PRs when no labels are given",
-			prs:       []map[string]any{{"number": 1, "labels": []map[string]string{}}, {"number": 2, "labels": []map[string]string{}}},
+			name: "counts only PRs whose branch is in this action's namespace",
+			prs: []map[string]any{
+				{"number": 1, "head": map[string]string{"ref": "mise-bump/go_1.27.0"}},
+				{"number": 2, "head": map[string]string{"ref": "dependabot/npm_and_yarn/left-pad-1.3.0"}},
+				{"number": 3, "head": map[string]string{"ref": "mise-bump/batch-abc123"}},
+			},
 			wantCount: 2,
 		},
 		{
-			name:   "counts only PRs carrying a matching label",
-			labels: []string{"dependencies"},
+			// A repo running both mise-bump-action and Dependabot: Dependabot
+			// defaults to the same "dependencies" label mise-bump-action
+			// does, so counting by label would wrongly count Dependabot's
+			// own PRs against max-open-prs (ADR 0016).
+			name: "does not count another tool's PR sharing the default dependencies label",
 			prs: []map[string]any{
-				{"number": 1, "labels": []map[string]string{{"name": "dependencies"}}},
-				{"number": 2, "labels": []map[string]string{{"name": "enhancement"}}},
-				{"number": 3, "labels": []map[string]string{{"name": "dependencies"}, {"name": "mise"}}},
+				{"number": 1, "labels": []map[string]string{{"name": "dependencies"}}, "head": map[string]string{"ref": "dependabot/npm_and_yarn/left-pad-1.3.0"}},
 			},
-			wantCount: 2,
+			wantCount: 0,
 		},
 	}
 
@@ -350,12 +354,58 @@ func TestCountOpenBumpPRs(t *testing.T) {
 			defer srv.Close()
 
 			c := NewClient(srv.Client(), srv.URL, "tok", "sgash708/example")
-			count, err := c.CountOpenBumpPRs(context.Background(), "main", tt.labels)
+			count, err := c.CountOpenBumpPRs(context.Background(), "main")
 			if err != nil {
 				t.Fatalf("CountOpenBumpPRs returned error: %v", err)
 			}
 			if count != tt.wantCount {
 				t.Errorf("count = %d, want %d", count, tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestHasOpenPRWithPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		prs    []map[string]any
+		want   bool
+	}{
+		{
+			name:   "finds a PR whose branch starts with prefix",
+			prefix: "mise-bump/go_",
+			prs: []map[string]any{
+				{"number": 1, "head": map[string]string{"ref": "mise-bump/go_1.26.1"}},
+			},
+			want: true,
+		},
+		{
+			name:   "does not match a different tool sharing a name prefix",
+			prefix: "mise-bump/go_",
+			prs: []map[string]any{
+				{"number": 1, "head": map[string]string{"ref": "mise-bump/go-github.com-matryer-moq_v0.7.1"}},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /repos/sgash708/example/pulls", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(tt.prs)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			c := NewClient(srv.Client(), srv.URL, "tok", "sgash708/example")
+			has, err := c.HasOpenPRWithPrefix(context.Background(), "main", tt.prefix)
+			if err != nil {
+				t.Fatalf("HasOpenPRWithPrefix returned error: %v", err)
+			}
+			if has != tt.want {
+				t.Errorf("has = %v, want %v", has, tt.want)
 			}
 		})
 	}

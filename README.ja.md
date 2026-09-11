@@ -103,7 +103,7 @@ GitHubは既定で「Actionsがpull requestを作成できる」設定を無効�
 | `base-branch` | PRのベースブランチ | 実行をトリガーしたref(`GITHUB_REF_NAME`) |
 | `dry-run` | `true`にするとブランチ/PRを作成せず、意図したPRのタイトル・本文・diffをjob summaryに出力する | `false` |
 | `ignore` | 恒久的に除外するツール名パターン(カンマ区切り)。完全一致、または末尾`*`の前方一致(例: `terraform,aqua:foo/*`) | (なし) |
-| `max-open-prs` | 同時に開いていてよいbump PR(`labels`を持つもの)の上限数。既存のPRも数に含む。`0`は無制限 | `0` |
+| `max-open-prs` | 本actionが同時に開いていてよいbump PRの上限数(ラベルではなくブランチ名で識別)。既存のPRも数に含む。同じツールの古いPRを置き換えるbumpは正味の増加として数えない。`0`は無制限 | `0` |
 
 ## Outputs
 

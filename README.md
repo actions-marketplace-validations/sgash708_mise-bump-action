@@ -87,7 +87,7 @@ See [examples/](examples/README.md) for details on each pattern.
 | `base-branch` | Base branch for pull requests | the ref that triggered the run (`GITHUB_REF_NAME`) |
 | `dry-run` | If `true`, print the intended pull request title/body/diff to the job summary without creating any branch or pull request | `false` |
 | `ignore` | Comma-separated tool-name patterns to never bump: an exact name, or a prefix ending in `*` (e.g. `terraform,aqua:foo/*`) | `` (none) |
-| `max-open-prs` | Cap on how many bump pull requests (carrying `labels`) may be open at once; existing ones count toward it. `0` means unlimited | `0` |
+| `max-open-prs` | Cap on how many bump pull requests this action may have open at once (identified by branch name, not labels); existing ones count toward it. Replacing a stale PR for the same tool never counts as a net increase. `0` means unlimited | `0` |
 
 ## Outputs
 

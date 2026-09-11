@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -266,14 +265,8 @@ func (c *Client) findClosedUnmergedPR(ctx context.Context, base, branch string) 
 // commenting that it was superseded by newNumber. Best-effort: the new PR
 // (already open at this point) is not affected by any failure here.
 func (c *Client) closeSupersededPRs(ctx context.Context, base, prefix, excludeBranch string, newNumber int) {
-	var out []struct {
-		Number int `json:"number"`
-		Head   struct {
-			Ref string `json:"ref"`
-		} `json:"head"`
-	}
-	path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100", c.repo, url.QueryEscape(base))
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	out, err := c.listOpenPRRefs(ctx, base)
+	if err != nil {
 		return
 	}
 	for _, pr := range out {
@@ -286,31 +279,57 @@ func (c *Client) closeSupersededPRs(ctx context.Context, base, prefix, excludeBr
 	}
 }
 
-// CountOpenBumpPRs reports how many open pull requests into base carry any
-// of labels (config.Config.MaxOpenPRs counts against this).
-func (c *Client) CountOpenBumpPRs(ctx context.Context, base string, labels []string) (int, error) {
-	var out []struct {
-		Labels []struct {
-			Name string `json:"name"`
-		} `json:"labels"`
-	}
-	path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100", c.repo, url.QueryEscape(base))
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+// CountOpenBumpPRs reports how many open pull requests into base this action
+// opened (branch name starting with runner.BranchNamespace). Matching by
+// branch name rather than by label avoids miscounting another tool's PRs
+// that happen to carry the same default label — e.g. Dependabot also
+// defaults to "dependencies" (ADR 0016).
+func (c *Client) CountOpenBumpPRs(ctx context.Context, base string) (int, error) {
+	prs, err := c.listOpenPRRefs(ctx, base)
+	if err != nil {
 		return 0, fmt.Errorf("failed to count open pull requests: %w", err)
 	}
-	if len(labels) == 0 {
-		return len(out), nil
-	}
 	count := 0
-	for _, pr := range out {
-		for _, l := range pr.Labels {
-			if slices.Contains(labels, l.Name) {
-				count++
-				break
-			}
+	for _, pr := range prs {
+		if strings.HasPrefix(pr.Head.Ref, runner.BranchNamespace) {
+			count++
 		}
 	}
 	return count, nil
+}
+
+// HasOpenPRWithPrefix reports whether an open pull request into base has a
+// branch starting with prefix.
+func (c *Client) HasOpenPRWithPrefix(ctx context.Context, base, prefix string) (bool, error) {
+	prs, err := c.listOpenPRRefs(ctx, base)
+	if err != nil {
+		return false, fmt.Errorf("failed to check for an existing pull request with prefix %s: %w", prefix, err)
+	}
+	for _, pr := range prs {
+		if strings.HasPrefix(pr.Head.Ref, prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+type openPRRef struct {
+	Number int `json:"number"`
+	Head   struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+}
+
+// listOpenPRRefs lists every open pull request into base along with its
+// head branch name, shared by CountOpenBumpPRs, HasOpenPRWithPrefix, and
+// closeSupersededPRs.
+func (c *Client) listOpenPRRefs(ctx context.Context, base string) ([]openPRRef, error) {
+	var out []openPRRef
+	path := fmt.Sprintf("/repos/%s/pulls?state=open&base=%s&per_page=100", c.repo, url.QueryEscape(base))
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // branchSHA returns the branch's current commit SHA, or exists=false if the

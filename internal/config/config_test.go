@@ -100,6 +100,32 @@ func TestFromEnv(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "123/head GITHUB_REF_NAME returns error",
+			env: map[string]string{
+				"GITHUB_TOKEN":      "tok",
+				"GITHUB_REPOSITORY": "sgash708/example",
+				"GITHUB_REF_NAME":   "123/head",
+			},
+			wantErr: true,
+		},
+		{
+			name: "branch name merely containing /head is accepted, not mistaken for a pull_request ref",
+			env: map[string]string{
+				"GITHUB_TOKEN":      "tok",
+				"GITHUB_REPOSITORY": "sgash708/example",
+				"GITHUB_REF_NAME":   "feature/header-fix",
+			},
+			want: Config{
+				MiseConfigPaths: []string{"mise.toml"},
+				PRStrategy:      grouping.PerTool,
+				Labels:          []string{"dependencies"},
+				BaseBranch:      "feature/header-fix",
+				GitHubToken:     "tok",
+				Repository:      "sgash708/example",
+				APIURL:          "https://api.github.com",
+			},
+		},
+		{
 			name: "dry-run input true enables DryRun",
 			env: map[string]string{
 				"GITHUB_TOKEN":      "tok",

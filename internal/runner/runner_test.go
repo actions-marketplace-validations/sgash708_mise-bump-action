@@ -188,8 +188,8 @@ func TestRun(t *testing.T) {
 						return []byte("[tools]\ngo = \"1.26.1\"\n"), "blobsha", nil
 					},
 					OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
-						if in.BranchPrefix != "mise-bump/go-" {
-							t.Errorf("BranchPrefix = %q, want %q", in.BranchPrefix, "mise-bump/go-")
+						if in.BranchPrefix != "mise-bump/go_" {
+							t.Errorf("BranchPrefix = %q, want %q", in.BranchPrefix, "mise-bump/go_")
 						}
 						return 1, nil
 					},
@@ -316,8 +316,11 @@ func TestRun_StopsOpeningPRsAtMaxOpenPRs(t *testing.T) {
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\n"), "blobsha", nil
 		},
-		CountOpenBumpPRsFunc: func(ctx context.Context, base string, labels []string) (int, error) {
+		CountOpenBumpPRsFunc: func(ctx context.Context, base string) (int, error) {
 			return 2, nil
+		},
+		HasOpenPRWithPrefixFunc: func(ctx context.Context, base, prefix string) (bool, error) {
+			return false, nil
 		},
 		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
 			t.Fatal("OpenBumpPR must not be called once max-open-prs is already reached")
@@ -350,8 +353,11 @@ func TestRun_MaxOpenPRsStopsPartway(t *testing.T) {
 		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
 			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\nterraform = \"1.7.5\"\n"), "blobsha", nil
 		},
-		CountOpenBumpPRsFunc: func(ctx context.Context, base string, labels []string) (int, error) {
+		CountOpenBumpPRsFunc: func(ctx context.Context, base string) (int, error) {
 			return 1, nil
+		},
+		HasOpenPRWithPrefixFunc: func(ctx context.Context, base, prefix string) (bool, error) {
+			return false, nil
 		},
 		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
 			opened++
@@ -369,6 +375,46 @@ func TestRun_MaxOpenPRsStopsPartway(t *testing.T) {
 	// (1 existing + 1 new = 2) is reached, leaving the 3rd group skipped.
 	if len(numbers) != 1 {
 		t.Errorf("expected exactly 1 new PR before hitting the cap, got %+v", numbers)
+	}
+}
+
+// TestRun_ReplacingAStaleBumpBypassesAnAlreadySaturatedCap guards against a
+// deadlock: if a stale PR could only ever be closed by its replacement
+// succeeding, but max-open-prs never let that replacement through while the
+// stale PR still occupied a slot, the cap would never recover on its own.
+func TestRun_ReplacingAStaleBumpBypassesAnAlreadySaturatedCap(t *testing.T) {
+	entries := []outdated.Entry{
+		{Name: "go", Requested: "1.26.1", Latest: "1.27.0", RelPath: "mise.toml"},
+		{Name: "node", Requested: "24.12.0", Latest: "24.13.0", RelPath: "mise.toml"},
+	}
+	var openedBranches []string
+	gh := &GitHubMock{
+		ReadFileFunc: func(ctx context.Context, path, ref string) ([]byte, string, error) {
+			return []byte("[tools]\ngo = \"1.26.1\"\nnode = \"24.12.0\"\n"), "blobsha", nil
+		},
+		CountOpenBumpPRsFunc: func(ctx context.Context, base string) (int, error) {
+			return 1, nil
+		},
+		HasOpenPRWithPrefixFunc: func(ctx context.Context, base, prefix string) (bool, error) {
+			return prefix == "mise-bump/go_", nil
+		},
+		OpenBumpPRFunc: func(ctx context.Context, in BumpPRInput) (int, error) {
+			openedBranches = append(openedBranches, in.BranchName)
+			return 1, nil
+		},
+	}
+	var out bytes.Buffer
+
+	cfg := config.Config{PRStrategy: grouping.PerTool, BaseBranch: "main", MaxOpenPRs: 1}
+	numbers, err := Run(context.Background(), cfg, entries, gh, &out)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(numbers) != 1 || len(openedBranches) != 1 || openedBranches[0] != "mise-bump/go_1.27.0" {
+		t.Errorf("expected only go's replacement bump to open despite an already-saturated cap, got numbers=%+v branches=%+v", numbers, openedBranches)
+	}
+	if !strings.Contains(out.String(), "max-open-prs") {
+		t.Errorf("expected node to still be skipped with a max-open-prs notice, got:\n%s", out.String())
 	}
 }
 
@@ -456,7 +502,7 @@ func TestRun_DryRun(t *testing.T) {
 
 	preview := out.String()
 	for _, want := range []string{
-		"mise-bump/go-1.27.0",
+		"mise-bump/go_1.27.0",
 		"chore(deps): bump go from 1.26.1 to 1.27.0",
 		`-go = "1.26.1"`,
 		`+go = "1.27.0"`,
@@ -513,7 +559,7 @@ func TestBranchName(t *testing.T) {
 		{
 			name:    "single entry uses the full tool name, not just the last path segment",
 			entries: []outdated.Entry{{Name: "aqua:golangci/golangci-lint", Latest: "2.13.2"}},
-			want:    "mise-bump/aqua-golangci-golangci-lint-2.13.2",
+			want:    "mise-bump/aqua-golangci-golangci-lint_2.13.2",
 		},
 		{
 			// Two different backends can share a trailing path segment (both
@@ -521,7 +567,7 @@ func TestBranchName(t *testing.T) {
 			// into "mise-bump/cli-...". The full sanitized name must not.
 			name:    "different backends with the same trailing segment do not collide",
 			entries: []outdated.Entry{{Name: "go:github.com/bar/cli", Latest: "1.0.0"}},
-			want:    "mise-bump/go-github.com-bar-cli-1.0.0",
+			want:    "mise-bump/go-github.com-bar-cli_1.0.0",
 		},
 	}
 
@@ -559,6 +605,18 @@ func TestBranchNameCollision(t *testing.T) {
 	goInstall := branchName([]outdated.Entry{{Name: "go:github.com/bar/cli", Latest: "1.0.0"}})
 	if aqua == goInstall {
 		t.Errorf("branch names for different backends collided: both are %q", aqua)
+	}
+}
+
+func TestBranchPrefixDoesNotMatchAnUnrelatedToolSharingAPrefix(t *testing.T) {
+	// "go" and "go:github.com/matryer/moq" both sanitize to strings starting
+	// with "go": without an unambiguous separator, go's branchPrefix would
+	// wrongly match moq's branch name too, causing closeSupersededPRs to
+	// close an unrelated tool's PR.
+	goPrefix := branchPrefix([]outdated.Entry{{Name: "go", Latest: "1.27.0"}})
+	moqBranch := branchName([]outdated.Entry{{Name: "go:github.com/matryer/moq", Latest: "v0.7.1"}})
+	if strings.HasPrefix(moqBranch, goPrefix) {
+		t.Errorf("go's branchPrefix %q wrongly matches an unrelated tool's branch %q", goPrefix, moqBranch)
 	}
 }
 
